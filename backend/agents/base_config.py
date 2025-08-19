@@ -73,11 +73,20 @@ class AgentConfig:
         self.azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2023-12-01-preview")
         self.azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
         
+        # Data processing configuration
+        self.storage_directory = os.getenv("STORAGE_DIRECTORY", "./storage")
+        self.uc4_output_directory = os.getenv("UC4_OUTPUT_DIRECTORY", self.storage_directory)
+        self.uc4_output_suffix = os.getenv("UC4_OUTPUT_SUFFIX", "_processed")
+        self.uc1_output_directory = os.getenv("UC1_OUTPUT_DIRECTORY", self.storage_directory)
+        self.uc1_output_suffix = os.getenv("UC1_OUTPUT_SUFFIX", "_uc1_completeness")
+        
         if not all([self.azure_api_key, self.azure_endpoint]):
             self.logger.error("Azure OpenAI credentials not found in environment variables")
             raise ValueError("Azure OpenAI credentials not found in environment variables")
         
         self.logger.info(f"AgentConfig initialized with endpoint: {self.azure_endpoint}")
+        self.logger.debug(f"UC4 output config: directory={self.uc4_output_directory}, suffix={self.uc4_output_suffix}")
+        self.logger.debug(f"UC1 output config: directory={self.uc1_output_directory}, suffix={self.uc1_output_suffix}")
     
     def get_azure_openai_model(self, temperature: float = 0.1) -> AzureOpenAI:
         """Get configured Azure OpenAI client"""
