@@ -121,11 +121,18 @@ async def process_file_with_reference_async(
                 if uc == "UC1":
                     log_agent_activity("UC1", f"Starting async analysis for {filename}", {"job_id": job_id})
                     uc1_result = await run_uc1_analysis(file_path, reference_file_path)
-                    all_results["UC1"] = uc1_result
+                    
+                    # Convert Pydantic model to dict for JSON serialization
+                    if hasattr(uc1_result, 'dict'):
+                        all_results["UC1"] = uc1_result.dict()
+                    else:
+                        all_results["UC1"] = uc1_result
+                    
                     log_agent_activity("UC1", f"Async analysis completed for {filename}", {
                         "job_id": job_id,
-                        "success": True,
-                        "duration_ms": (datetime.now() - uc_start_time).total_seconds() * 1000
+                        "success": uc1_result.success if hasattr(uc1_result, 'success') else True,
+                        "duration_ms": (datetime.now() - uc_start_time).total_seconds() * 1000,
+                        "output_file": uc1_result.output_file_path if hasattr(uc1_result, 'output_file_path') else None
                     })
                     
                 elif uc == "UC4":
@@ -442,7 +449,7 @@ async def process_directory(
     Process all CSV files from directory against reference files for selected UCs
     """
     # DEBUG: Log incoming request
-    print(f"🔥 DEBUG: Received batch processing request:")
+    print("🔥 DEBUG: Received batch processing request:")
     print(f"   Directory: {request.directory_path}")
     print(f"   Selected UCs: {request.selected_ucs}")
     print(f"   Reference paths: {request.reference_file_paths}")
