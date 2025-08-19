@@ -4,6 +4,7 @@ Batch processing routes for the Data Quality Platform
 
 import os
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
@@ -20,6 +21,122 @@ router = APIRouter(prefix="/batch", tags=["batch"])
 # Global semaphore to limit concurrent processing jobs to 5
 MAX_CONCURRENT_JOBS = 5
 job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+
+async def restart_queued_jobs(queued_jobs: List[JobRecord]):
+    """
+    Restart queued jobs from server recovery.
+    This function processes jobs that were interrupted by server restart.
+    """
+    from database import SessionLocal
+    
+    logger = log_agent_activity
+    logger("JobRecovery", f"Starting restart of {len(queued_jobs)} queued jobs", {
+        "job_count": len(queued_jobs),
+        "max_concurrent": MAX_CONCURRENT_JOBS
+    })
+    
+    # Process jobs in batches based on the semaphore limit
+    async def restart_single_job(job: JobRecord):
+        """Restart a single job with proper error handling"""
+        db = SessionLocal()
+        try:
+            # Refresh job to get current state
+            job = db.query(JobRecord).filter(JobRecord.id == job.id).first()
+            if not job or job.status != "queued":
+                return
+            
+            # Parse selected UCs and reference file paths
+            selected_ucs = job.selected_ucs.split(",") if job.selected_ucs else []
+            
+            # Parse reference file paths from the stored string
+            reference_files_by_uc = {}
+            if job.reference_file_path:
+                try:
+                    # Try to parse as JSON first
+                    reference_files_by_uc = json.loads(job.reference_file_path.replace("'", '"'))
+                except (json.JSONDecodeError, AttributeError):
+                    # Fallback for older format - get active reference files
+                    from database import ReferenceFile
+                    for uc in selected_ucs:
+                        ref_file = db.query(ReferenceFile).filter(
+                            ReferenceFile.uc_type == uc,
+                            ReferenceFile.is_active
+                        ).first()
+                        if ref_file:
+                            reference_files_by_uc[uc] = ref_file.file_path
+            
+            # Validate that we have the required data
+            if not selected_ucs or not reference_files_by_uc:
+                logger("JobRecovery", f"Skipping job {job.id} - missing UC or reference file data", {
+                    "job_id": job.id,
+                    "selected_ucs": selected_ucs,
+                    "reference_files": reference_files_by_uc
+                }, "warning")
+                return
+            
+            # Check if file still exists
+            if not os.path.exists(job.file_path):
+                logger("JobRecovery", f"Skipping job {job.id} - file not found: {job.file_path}", {
+                    "job_id": job.id,
+                    "file_path": job.file_path
+                }, "warning")
+                job.status = "failed"
+                job.error_message = f"File not found: {job.file_path}"
+                db.commit()
+                return
+            
+            logger("JobRecovery", f"Restarting job {job.id}: {job.filename}", {
+                "job_id": job.id,
+                "filename": job.filename,
+                "selected_ucs": selected_ucs,
+                "reference_files": list(reference_files_by_uc.keys())
+            })
+            
+            # Start the job processing
+            await process_file_with_reference_async(
+                job.file_path,
+                reference_files_by_uc,
+                selected_ucs,
+                job.id
+            )
+            
+        except Exception as e:
+            logger("JobRecovery", f"Failed to restart job {job.id}", {
+                "job_id": job.id,
+                "error": str(e)
+            }, "error")
+            
+            # Update job status to failed
+            try:
+                job.status = "failed"
+                job.error_message = f"Recovery failed: {str(e)}"
+                db.commit()
+            except Exception:
+                db.rollback()
+        finally:
+            db.close()
+    
+    # Create semaphore-controlled tasks
+    async def restart_with_semaphore(job):
+        async with job_semaphore:
+            await restart_single_job(job)
+    
+    # Create tasks for all jobs
+    tasks = [restart_with_semaphore(job) for job in queued_jobs]
+    
+    # Run all tasks with concurrency control
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger("JobRecovery", f"Completed restart attempt for {len(queued_jobs)} jobs", {
+            "job_count": len(queued_jobs),
+            "status": "completed"
+        })
+    except Exception as e:
+        logger("JobRecovery", f"Job restart batch failed", {
+            "error": str(e),
+            "job_count": len(queued_jobs)
+        }, "error")
 
 
 class ProcessDirectoryRequest(BaseModel):
@@ -144,11 +261,33 @@ async def process_file_with_reference_async(
                 elif uc == "UC4":
                     log_agent_activity("UC4", f"Starting async analysis for {filename}", {"job_id": job_id})
                     uc4_result = await run_uc4_analysis(file_path, reference_file_path)
-                    all_results["UC4"] = uc4_result
+                    
+                    # Convert Pydantic model to dict and extract duplicate info
+                    if hasattr(uc4_result, 'dict'):
+                        all_results["UC4"] = uc4_result.dict()
+                        
+                        # Update job with duplicate statistics from UC4 result
+                        if hasattr(uc4_result, 'duplicate_rows_removed'):
+                            job.duplicate_count = uc4_result.duplicate_rows_removed
+                        if hasattr(uc4_result, 'duplicate_percentage'):
+                            job.duplicate_percentage = uc4_result.duplicate_percentage
+                        if hasattr(uc4_result, 'total_rows_original'):
+                            job.total_rows_original = uc4_result.total_rows_original
+                        if hasattr(uc4_result, 'total_rows_processed'):
+                            job.total_rows_processed = uc4_result.total_rows_processed
+                        if hasattr(uc4_result, 'duplicate_rows_removed') and uc4_result.duplicate_rows_removed > 0:
+                            job.has_duplicates = True
+                        else:
+                            job.has_duplicates = False
+                    else:
+                        all_results["UC4"] = uc4_result
+                    
                     log_agent_activity("UC4", f"Async analysis completed for {filename}", {
                         "job_id": job_id,
                         "success": True,
-                        "duration_ms": (datetime.now() - uc_start_time).total_seconds() * 1000
+                        "duration_ms": (datetime.now() - uc_start_time).total_seconds() * 1000,
+                        "duplicates_removed": getattr(uc4_result, 'duplicate_rows_removed', 0),
+                        "duplicate_percentage": getattr(uc4_result, 'duplicate_percentage', 0.0)
                     })
                 
                 uc_duration = (datetime.now() - uc_start_time).total_seconds() * 1000
@@ -725,4 +864,78 @@ async def update_concurrency(max_jobs: int = 5):
         "message": f"Max concurrent jobs updated from {old_max} to {MAX_CONCURRENT_JOBS}",
         "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
         "note": "Change will take effect on application restart"
+    }
+
+
+@router.post("/recover-jobs")
+async def manually_recover_jobs(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Manually trigger job recovery for stuck or queued jobs
+    """
+    # Find stuck jobs
+    stuck_processing_statuses = ["processing", "processing_uc1", "processing_uc4", 
+                               "analyzing_completeness", "detecting_duplicates", "cleaning_file"]
+    
+    stuck_jobs = db.query(JobRecord).filter(JobRecord.status.in_(stuck_processing_statuses)).all()
+    
+    # Reset stuck jobs to queued
+    for job in stuck_jobs:
+        log_agent_activity("JobRecovery", f"Manually resetting stuck job {job.id} from {job.status} to queued", {
+            "job_id": job.id,
+            "filename": job.filename,
+            "previous_status": job.status
+        })
+        job.status = "queued"
+        job.started_at = None
+    
+    db.commit()
+    
+    # Get all queued jobs
+    queued_jobs = db.query(JobRecord).filter(JobRecord.status == "queued").all()
+    
+    # Start recovery in background
+    if queued_jobs:
+        background_tasks.add_task(restart_queued_jobs, queued_jobs)
+    
+    log_agent_activity("JobRecovery", "Manual job recovery initiated", {
+        "stuck_jobs_reset": len(stuck_jobs),
+        "total_queued_jobs": len(queued_jobs)
+    })
+    
+    return {
+        "message": f"Job recovery initiated. Reset {len(stuck_jobs)} stuck jobs, restarting {len(queued_jobs)} queued jobs.",
+        "stuck_jobs_reset": len(stuck_jobs),
+        "queued_jobs_to_restart": len(queued_jobs),
+        "status": "recovery_started"
+    }
+
+
+@router.get("/stuck-jobs")
+async def get_stuck_jobs(db: Session = Depends(get_db)):
+    """
+    Get information about stuck or queued jobs
+    """
+    stuck_processing_statuses = ["processing", "processing_uc1", "processing_uc4", 
+                               "analyzing_completeness", "detecting_duplicates", "cleaning_file"]
+    
+    stuck_jobs = db.query(JobRecord).filter(JobRecord.status.in_(stuck_processing_statuses)).all()
+    queued_jobs = db.query(JobRecord).filter(JobRecord.status == "queued").all()
+    
+    def job_to_dict(job):
+        return {
+            "id": job.id,
+            "filename": job.filename,
+            "status": job.status,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "selected_ucs": job.selected_ucs,
+            "error_message": job.error_message
+        }
+    
+    return {
+        "stuck_jobs": [job_to_dict(job) for job in stuck_jobs],
+        "queued_jobs": [job_to_dict(job) for job in queued_jobs],
+        "total_stuck": len(stuck_jobs),
+        "total_queued": len(queued_jobs),
+        "recovery_available": len(stuck_jobs) > 0 or len(queued_jobs) > 0
     }

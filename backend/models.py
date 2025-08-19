@@ -16,6 +16,10 @@ class JobResponse(BaseModel):
     quality_score: Optional[float] = None
     is_sparse: Optional[bool] = None
     has_duplicates: Optional[bool] = None
+    duplicate_count: Optional[int] = None
+    duplicate_percentage: Optional[float] = None
+    total_rows_original: Optional[int] = None
+    total_rows_processed: Optional[int] = None
 
 
 class JobDetails(BaseModel):
@@ -30,6 +34,10 @@ class JobDetails(BaseModel):
     quality_score: Optional[float] = None
     is_sparse: Optional[bool] = None
     has_duplicates: Optional[bool] = None
+    duplicate_count: Optional[int] = None
+    duplicate_percentage: Optional[float] = None
+    total_rows_original: Optional[int] = None
+    total_rows_processed: Optional[int] = None
     results: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
 

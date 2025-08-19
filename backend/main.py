@@ -5,15 +5,17 @@ This FastAPI application provides endpoints for UC1 (Sparse Data Detection) and 
 using the Agno framework with Azure OpenAI for comprehensive data quality analysis.
 """
 
+import asyncio
+import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from database import init_db
+from database import init_db, SessionLocal, JobRecord
 from routes import jobs, upload, batch
 from agents.base_config import AgentConfig, log_agent_activity
 
@@ -22,6 +24,70 @@ load_dotenv()
 
 # Initialize logging first
 logger = logging.getLogger(__name__)
+
+
+async def recover_stuck_jobs():
+    """
+    Recover jobs that were stuck in processing states when server was restarted.
+    Reset processing jobs to queued and restart queued jobs.
+    """
+    db = SessionLocal()
+    try:
+        # Define stuck statuses that need recovery
+        stuck_processing_statuses = ["processing", "processing_uc1", "processing_uc4", 
+                                   "analyzing_completeness", "detecting_duplicates", "cleaning_file"]
+        
+        # Reset stuck processing jobs to queued
+        stuck_jobs = db.query(JobRecord).filter(JobRecord.status.in_(stuck_processing_statuses)).all()
+        
+        for job in stuck_jobs:
+            logger.info(f"🔄 Recovering stuck job {job.id}: {job.filename} (was {job.status})")
+            job.status = "queued"
+            job.started_at = None  # Reset start time
+            log_agent_activity("JobRecovery", f"Reset stuck job {job.id} from {job.status} to queued", {
+                "job_id": job.id,
+                "filename": job.filename,
+                "previous_status": job.status
+            })
+        
+        db.commit()
+        
+        # Get all queued jobs for restart
+        queued_jobs = db.query(JobRecord).filter(JobRecord.status == "queued").all()
+        
+        logger.info(f"🔄 Found {len(queued_jobs)} queued jobs to restart")
+        log_agent_activity("JobRecovery", f"Found {len(queued_jobs)} queued jobs for restart", {
+            "stuck_jobs_reset": len(stuck_jobs),
+            "total_queued_jobs": len(queued_jobs)
+        })
+        
+        # Restart queued jobs if any exist
+        if queued_jobs:
+            # Import here to avoid circular import
+            from routes.batch import restart_queued_jobs
+            await restart_queued_jobs(queued_jobs)
+        
+        return {"recovered_jobs": len(stuck_jobs), "restarted_jobs": len(queued_jobs)}
+        
+    except Exception as e:
+        logger.error(f"❌ Job recovery failed: {e}")
+        log_agent_activity("JobRecovery", "Job recovery failed", {"error": str(e)}, "error")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+async def start_background_job_recovery():
+    """
+    Start background job recovery service
+    """
+    try:
+        logger.info("🚀 Starting background job recovery service...")
+        log_agent_activity("JobRecovery", "Background job recovery service started", {"status": "active"})
+    except Exception as e:
+        logger.error(f"❌ Background job recovery service failed to start: {e}")
+        log_agent_activity("JobRecovery", "Background job recovery service failed", {"error": str(e)}, "error")
 
 # Configuration from environment variables
 class Config:
@@ -155,6 +221,29 @@ async def startup_event():
         logger.error(f"❌ Database initialization failed: {e}")
         log_agent_activity("Platform", "Database initialization failed", {"error": str(e)}, "error")
         raise
+    
+    # Recover stuck jobs from previous session
+    try:
+        recovery_result = await recover_stuck_jobs()
+        logger.info(f"✅ Job recovery completed successfully: {recovery_result}")
+        log_agent_activity("Platform", "Job recovery completed", {
+            "status": "success",
+            "recovered_jobs": recovery_result.get("recovered_jobs", 0),
+            "restarted_jobs": recovery_result.get("restarted_jobs", 0)
+        })
+    except Exception as e:
+        logger.error(f"❌ Job recovery failed: {e}")
+        log_agent_activity("Platform", "Job recovery failed", {"error": str(e)}, "error")
+        # Don't raise here - we want the server to start even if recovery fails
+    
+    # Start background job recovery service
+    try:
+        await start_background_job_recovery()
+        logger.info("✅ Background job recovery service started")
+        log_agent_activity("Platform", "Background job recovery service started", {"status": "active"})
+    except Exception as e:
+        logger.error(f"❌ Background job recovery service failed: {e}")
+        log_agent_activity("Platform", "Background job recovery service failed", {"error": str(e)}, "error")
     
     # Validate Azure OpenAI configuration
     try:

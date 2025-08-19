@@ -115,6 +115,64 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+@router.get("/preview-file")
+async def preview_file(filename: str, directory: str = None):
+    """Get a preview of a CSV file with first few rows"""
+    if directory:
+        data_directory = directory
+    else:
+        data_directory = os.getenv("DATA_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files")
+    
+    file_path = os.path.join(data_directory, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+    
+    if not filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files can be previewed")
+    
+    try:
+        import csv
+        
+        headers = []
+        rows = []
+        total_rows = 0
+        
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:
+            # Read file to count total rows
+            total_rows = sum(1 for line in csvfile) - 1  # Subtract 1 for header
+            
+            # Reset file pointer
+            csvfile.seek(0)
+            
+            # Read with CSV reader
+            csv_reader = csv.reader(csvfile)
+            
+            # Get headers
+            headers = next(csv_reader, [])
+            
+            # Get first 100 data rows
+            for i, row in enumerate(csv_reader):
+                if i >= 100:  # Limit to first 100 rows
+                    break
+                    
+                # Ensure row has same length as headers
+                while len(row) < len(headers):
+                    row.append('')
+                    
+                rows.append(row[:len(headers)])  # Trim if longer than headers
+        
+        return {
+            "filename": filename,
+            "headers": headers,
+            "rows": rows,
+            "totalRows": total_rows
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+
 @router.get("/directory-files")
 async def get_directory_files(directory: str = None):
     """Get list of all files in the specified or configured data directory with their processing status"""

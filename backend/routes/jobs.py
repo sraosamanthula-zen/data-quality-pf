@@ -53,9 +53,35 @@ async def get_job_statistics(db: Session = Depends(get_db)):
 
 @router.get("", response_model=List[JobResponse])
 async def get_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Get list of all jobs with pagination"""
+    """Get list of all jobs with pagination, including duplicate information"""
     jobs = db.query(JobRecord).order_by(JobRecord.created_at.desc()).offset(skip).limit(limit).all()
-    return jobs
+    
+    # Convert to dict to include duplicate information
+    job_list = []
+    for job in jobs:
+        job_dict = {
+            "id": job.id,
+            "filename": job.filename,
+            "file_path": job.file_path,
+            "job_type": job.job_type,
+            "status": job.status,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "quality_score": job.quality_score,
+            "is_sparse": job.is_sparse,
+            "has_duplicates": job.has_duplicates,
+            "duplicate_count": job.duplicate_count,
+            "duplicate_percentage": job.duplicate_percentage,
+            "total_rows_original": job.total_rows_original,
+            "total_rows_processed": job.total_rows_processed,
+            "selected_ucs": job.selected_ucs,
+            "is_reference": job.is_reference,
+            "error_message": job.error_message
+        }
+        job_list.append(job_dict)
+    
+    return job_list
 
 
 @router.get("/activity")
@@ -172,6 +198,10 @@ async def get_job_details(job_id: int, db: Session = Depends(get_db)):
         "quality_score": job.quality_score,
         "is_sparse": job.is_sparse,
         "has_duplicates": job.has_duplicates,
+        "duplicate_count": job.duplicate_count,
+        "duplicate_percentage": job.duplicate_percentage,
+        "total_rows_original": job.total_rows_original,
+        "total_rows_processed": job.total_rows_processed,
         "results": results,
         "error_message": job.error_message,
         "selected_ucs": job.selected_ucs,

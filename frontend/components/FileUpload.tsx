@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ExclamationCircleIcon, FolderIcon, PlayIcon, CogIcon } from '@heroicons/react/24/outline';
+import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ExclamationCircleIcon, FolderIcon, PlayIcon, CogIcon, EyeIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '@/lib/api';
 
 interface FileUploadProps {
@@ -58,6 +58,17 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   const [config, setConfig] = useState<PlatformConfig | null>(null);
   const [showHistory, setShowHistory] = useState<string | null>(null);
   const [referenceHistory, setReferenceHistory] = useState<{[key: string]: any}>({});
+  const [previewFile, setPreviewFile] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<{
+    headers: string[];
+    rows: string[][];
+    totalRows: number;
+  } | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [modalSize, setModalSize] = useState({ width: 1200, height: 600 });
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
+  const [resizeStartSize, setResizeStartSize] = useState({ width: 0, height: 0 });
 
   // Fetch configuration, directory files, and reference files on component mount
   useEffect(() => {
@@ -327,6 +338,74 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
     setShowHistory(null);
   };
 
+  const handlePreviewFile = async (filename: string) => {
+    setLoadingPreview(true);
+    setPreviewFile(filename);
+    
+    try {
+      const response = await apiClient.get(`/upload/preview-file`, {
+        params: {
+          filename: filename,
+          directory: directoryPath
+        }
+      });
+      
+      setPreviewData(response.data);
+    } catch (error: any) {
+      console.error('Error previewing file:', error);
+      setUploadStatus({
+        type: 'error',
+        message: error.response?.data?.detail || 'Failed to preview file',
+      });
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewData(null);
+  };
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    setResizeStartPos({ x: e.clientX, y: e.clientY });
+    setResizeStartSize({ width: modalSize.width, height: modalSize.height });
+  };
+
+  const handleResizeMove = useCallback((e: MouseEvent) => {
+    if (!isResizing) return;
+    
+    const deltaX = e.clientX - resizeStartPos.x;
+    const deltaY = e.clientY - resizeStartPos.y;
+    
+    const newWidth = Math.max(400, Math.min(window.innerWidth - 100, resizeStartSize.width + deltaX));
+    const newHeight = Math.max(300, Math.min(window.innerHeight - 100, resizeStartSize.height + deltaY));
+    
+    setModalSize({ width: newWidth, height: newHeight });
+  }, [isResizing, resizeStartPos, resizeStartSize]);
+
+  const handleResizeEnd = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleResizeMove);
+      document.addEventListener('mouseup', handleResizeEnd);
+      document.body.style.cursor = 'nw-resize';
+      document.body.style.userSelect = 'none';
+      
+      return () => {
+        document.removeEventListener('mousemove', handleResizeMove);
+        document.removeEventListener('mouseup', handleResizeEnd);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+    }
+  }, [isResizing, handleResizeMove, handleResizeEnd]);
+
   const createUCDropzone = (ucType: string) => {
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
       onDrop: (files) => {
@@ -346,14 +425,22 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
     <div className="space-y-6">
       {/* Configuration Display */}
       {config && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2 mb-2">
-            <CogIcon className="h-5 w-5 text-blue-600" />
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 shadow-sm">
+          <div className="flex items-center space-x-2 mb-3">
+            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+              <CogIcon className="h-4 w-4 text-blue-600" />
+            </div>
             <h3 className="text-sm font-medium text-blue-900">Platform Configuration</h3>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-xs text-blue-700">
-            <div>Storage: {config.storage_directory}</div>
-            <div>Result Suffix: {config.result_suffix}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-white bg-opacity-60 rounded-md p-3 border border-blue-100">
+              <div className="text-xs font-medium text-blue-800 mb-1">Storage Directory</div>
+              <div className="text-xs text-blue-700 font-mono break-all">{config.storage_directory}</div>
+            </div>
+            <div className="bg-white bg-opacity-60 rounded-md p-3 border border-blue-100">
+              <div className="text-xs font-medium text-blue-800 mb-1">Result Suffix</div>
+              <div className="text-xs text-blue-700 font-mono">{config.result_suffix}</div>
+            </div>
           </div>
         </div>
       )}
@@ -570,64 +657,58 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                 </button>
               </div>
 
-              {/* Reference Files Status */}
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <h5 className="text-sm font-medium text-blue-900 mb-2">Reference Files Status:</h5>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className={`flex items-center space-x-1 ${referenceFiles.UC1 ? 'text-green-700' : 'text-gray-500'}`}>
-                    {referenceFiles.UC1 ? (
-                      <CheckCircleIcon className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <ExclamationCircleIcon className="h-4 w-4 text-gray-400" />
-                    )}
-                    <span>UC1: {referenceFiles.UC1 ? referenceFiles.UC1.filename : 'Not uploaded'}</span>
-                  </div>
-                  <div className={`flex items-center space-x-1 ${referenceFiles.UC4 ? 'text-green-700' : 'text-gray-500'}`}>
-                    {referenceFiles.UC4 ? (
-                      <CheckCircleIcon className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <ExclamationCircleIcon className="h-4 w-4 text-gray-400" />
-                    )}
-                    <span>UC4: {referenceFiles.UC4 ? referenceFiles.UC4.filename : 'Not uploaded'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Files List */}
-              <div className="border rounded-lg bg-gray-50 max-h-60 overflow-y-auto">
+              {/* Files List - Tile Layout */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3 max-h-96 overflow-y-auto p-4 bg-gray-50 rounded-lg">
                 {directoryFiles.length > 0 ? (
-                  <div className="divide-y divide-gray-200">
-                    {directoryFiles.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 hover:bg-gray-100">
-                        <div className="flex items-center space-x-3">
-                          <DocumentIcon className="h-5 w-5 text-gray-400" />
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                            {file.size && (
-                              <p className="text-xs text-gray-500">
-                                {(file.size / 1024).toFixed(1)} KB
-                              </p>
-                            )}
-                          </div>
+                  directoryFiles.map((file, index) => (
+                    <div key={index} className="bg-white rounded-lg border border-gray-200 p-3 hover:shadow-md transition-shadow duration-200 relative min-h-[120px] flex flex-col">
+                      {/* Status and Preview Icons */}
+                      <div className="absolute top-2 right-2 z-10 flex items-center space-x-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePreviewFile(file.name);
+                          }}
+                          className="bg-blue-100 hover:bg-blue-200 text-blue-600 hover:text-blue-800 rounded-full p-1 transition-colors"
+                          title="Preview file"
+                        >
+                          <EyeIcon className="h-3 w-3" />
+                        </button>
+                        {file.processed ? (
+                          <span className="px-1.5 py-0.5 bg-green-100 text-green-800 text-xs rounded-full font-medium">
+                            ✓
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full font-medium">
+                            •
+                          </span>
+                        )}
+                      </div>
+
+                      {/* File Icon */}
+                      <div className="flex flex-col items-center justify-center flex-1 space-y-2 mt-2">
+                        <div className="relative">
+                          <DocumentIcon className="h-8 w-8 text-blue-500 flex-shrink-0" />
                         </div>
-                        <div className="flex items-center space-x-2">
-                          {file.processed ? (
-                            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
-                              Processed
-                            </span>
-                          ) : (
-                            <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">
-                              Pending
-                            </span>
+
+                        {/* Filename */}
+                        <div className="text-center w-full px-1">
+                          <p className="text-xs font-medium text-gray-900 break-words line-clamp-2 leading-tight" title={file.name}>
+                            {file.name.length > 25 ? `${file.name.substring(0, 22)}...` : file.name}
+                          </p>
+                          {file.size && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              {(file.size / 1024).toFixed(1)} KB
+                            </p>
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))
                 ) : (
-                  <div className="p-4 text-center text-gray-500 text-sm">
-                    <FolderIcon className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                    No CSV files found in directory
+                  <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
+                    <FolderIcon className="h-12 w-12 text-gray-400 mb-4" />
+                    <p className="text-gray-500 text-sm">No CSV files found in directory</p>
                   </div>
                 )}
               </div>
@@ -655,6 +736,109 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
           </div>
         )}
       </div>
+
+      {/* File Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div 
+            className="bg-white rounded-lg mx-4 flex flex-col shadow-2xl relative"
+            style={{ 
+              width: `${modalSize.width}px`, 
+              height: `${modalSize.height}px`,
+              maxWidth: '95vw',
+              maxHeight: '95vh'
+            }}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
+              <h3 className="text-lg font-medium text-gray-900">
+                File Preview: {previewFile}
+              </h3>
+              <button
+                onClick={closePreview}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XMarkIcon className="w-6 h-6" />
+              </button>
+            </div>
+            
+            {/* Modal Content */}
+            <div className="flex-1 overflow-hidden p-6 min-h-0">
+              {loadingPreview ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  <span className="ml-2 text-gray-600">Loading preview...</span>
+                </div>
+              ) : previewData ? (
+                <div className="space-y-4 h-full flex flex-col">
+                  <div className="text-sm text-gray-600 flex-shrink-0">
+                    Showing first 100 rows of {previewData.totalRows} total rows
+                  </div>
+                  
+                  <div className="overflow-auto flex-1 border border-gray-200 rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200">
+                            #
+                          </th>
+                          {previewData.headers.map((header, index) => (
+                            <th
+                              key={index}
+                              className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 last:border-r-0"
+                            >
+                              {header}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {previewData.rows.map((row, rowIndex) => (
+                          <tr key={rowIndex} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500 border-r border-gray-200">
+                              {rowIndex + 1}
+                            </td>
+                            {row.map((cell, cellIndex) => (
+                              <td
+                                key={cellIndex}
+                                className="px-3 py-2 text-xs text-gray-900 border-r border-gray-200 last:border-r-0 max-w-xs truncate"
+                                title={cell}
+                              >
+                                {cell || '-'}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  {previewData.totalRows > 100 && (
+                    <div className="text-xs text-gray-500 text-center flex-shrink-0">
+                      ... and {previewData.totalRows - 100} more rows
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  Failed to load preview
+                </div>
+              )}
+            </div>
+
+            {/* Resize Handle */}
+            <div
+              className="absolute bottom-0 right-0 w-4 h-4 cursor-nw-resize bg-gray-300 hover:bg-gray-400 transition-colors"
+              style={{
+                background: 'linear-gradient(-45deg, transparent 0%, transparent 30%, #9CA3AF 30%, #9CA3AF 40%, transparent 40%, transparent 60%, #9CA3AF 60%, #9CA3AF 70%, transparent 70%)',
+                borderBottomRightRadius: '0.5rem'
+              }}
+              onMouseDown={handleResizeStart}
+              title="Drag to resize"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Reference File History Modal */}
       {showHistory && referenceHistory[showHistory] && (

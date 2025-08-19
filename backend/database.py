@@ -38,6 +38,10 @@ class JobRecord(Base):
     quality_score = Column(Float, nullable=True)
     is_sparse = Column(Boolean, nullable=True)
     has_duplicates = Column(Boolean, nullable=True)
+    duplicate_count = Column(Integer, nullable=True)  # Number of duplicate records found
+    duplicate_percentage = Column(Float, nullable=True)  # Percentage of duplicates
+    total_rows_original = Column(Integer, nullable=True)  # Original row count
+    total_rows_processed = Column(Integer, nullable=True)  # Processed row count after deduplication
     results = Column(Text, nullable=True)  # JSON results
     results_json = Column(Text, nullable=True)  # JSON results (alternative field name)
     result_file_path = Column(String, nullable=True)  # Path to result file
