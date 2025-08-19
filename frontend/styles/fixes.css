@@ -1,0 +1,89 @@
+/* Critical CSS fixes to override broken /* Icon size constraints */
+.icon-sm {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.icon-md {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+.icon-lg {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+/* Status icons specifically */
+.status-icon {
+  width: 16px !important;
+  height: 16px !important;
+  flex-shrink: 0 !important;
+}
+
+/* Table cell icons */
+td svg {
+  width: 16px !important;
+  height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+}
+
+/* Heroicons specific fixes */
+.heroicon {
+  width: 16px !important;
+  height: 16px !important;
+}nsure all SVG icons have maximum constraints */
+svg {
+  max-width: 200px !important;
+  max-height: 200px !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+/* Specific fixes for cloud upload icon */
+.cloud-upload-icon {
+  width: 40px !important;
+  height: 40px !important;
+  max-width: 40px !important;
+  max-height: 40px !important;
+}
+
+/* Ensure containers don't overflow */
+.file-upload-container {
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Fix for any oversized elements */
+* {
+  max-width: 100vw !important;
+}
+
+/* Ensure proper box sizing */
+*, *::before, *::after {
+  box-sizing: border-box !important;
+}
+
+/* Loading state styles */
+.loading-spinner {
+  width: 48px !important;
+  height: 48px !important;
+  border-width: 2px !important;
+}
+
+/* Icon size constraints for different contexts */
+.icon-sm {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.icon-md {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.icon-lg {
+  width: 40px !important;
+  height: 40px !important;
+}
