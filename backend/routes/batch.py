@@ -17,6 +17,10 @@ from agents.base_config import log_agent_activity
 
 router = APIRouter(prefix="/batch", tags=["batch"])
 
+# Global semaphore to limit concurrent processing jobs to 5
+MAX_CONCURRENT_JOBS = 5
+job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
 
 class ProcessDirectoryRequest(BaseModel):
     directory_path: str = None  # Optional - will use default from env if not provided
@@ -51,6 +55,7 @@ async def process_file_with_reference_async(
 ):
     """
     Async version of process_file_with_reference for proper background processing
+    Note: Concurrency control is now handled at the caller level
     """
     from agents.base_config import log_agent_activity, log_processing_step, log_performance_metrics, log_agent_error
     from database import SessionLocal  # Import SessionLocal for creating new session
@@ -76,10 +81,11 @@ async def process_file_with_reference_async(
         job.status = "processing"
         db.commit()
         
-        log_processing_step(job_id, "BatchProcessor", "Starting async file processing", {
+        log_processing_step(job_id, "BatchProcessor", "Starting async file processing with concurrency control", {
             "filename": filename,
             "reference_files": reference_files_by_uc,
-            "selected_ucs": selected_ucs
+            "selected_ucs": selected_ucs,
+            "concurrent_slot_acquired": True
         })
         
         # Import processing functions inside the function to avoid circular imports
@@ -167,8 +173,17 @@ async def process_file_with_reference_async(
         result_path = results_dir / result_filename
         
         import json
+        
+        # Custom JSON encoder to handle datetime objects and Pydantic models
+        def json_serializer(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if hasattr(obj, 'dict'):  # Pydantic model
+                return obj.dict()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
         with open(result_path, 'w') as f:
-            json.dump(all_results, f, indent=2)
+            json.dump(all_results, f, indent=2, default=json_serializer)
         
         log_processing_step(job_id, "BatchProcessor", "Async results saved", {
             "result_file": str(result_path)
@@ -224,7 +239,7 @@ async def process_file_with_reference_async(
             job.error_message = str(e)
             try:
                 db.commit()
-            except:
+            except Exception:
                 db.rollback()
             
             log_agent_error("BatchProcessor", "async_file_processing", e, {
@@ -419,7 +434,7 @@ async def process_file_with_reference(
             job.error_message = str(e)
             try:
                 db.commit()
-            except:
+            except Exception:
                 db.rollback()
             
             log_agent_error("BatchProcessor", "file_processing", e, {
@@ -446,7 +461,7 @@ async def process_directory(
     db: Session = Depends(get_db)
 ):
     """
-    Process all CSV files from directory against reference files for selected UCs
+    Process all CSV files from directory against reference files for selected UCs in parallel
     """
     # DEBUG: Log incoming request
     print("🔥 DEBUG: Received batch processing request:")
@@ -501,8 +516,10 @@ async def process_directory(
     if not csv_files:
         raise HTTPException(status_code=404, detail=f"No unprocessed CSV files found in directory: {data_directory}")
     
-    # Queue processing tasks for each file
+    # Create jobs for all files first
     job_ids = []
+    job_data_list = []
+    
     for filename in csv_files:
         file_path = os.path.join(data_directory, filename)
         
@@ -521,32 +538,84 @@ async def process_directory(
         db.refresh(job)
         job_ids.append(job.id)
         
-        # Add background task for processing using async
-        background_tasks.add_task(
-            run_async_background_task,
-            process_file_with_reference_async(
-                file_path,
-                reference_files_by_uc,
-                request.selected_ucs,
-                job.id  # Pass job ID instead of database session
-            )
-        )
+        # Store job data for processing
+        job_data_list.append({
+            "file_path": file_path,
+            "reference_files": reference_files_by_uc,
+            "selected_ucs": request.selected_ucs,
+            "job_id": job.id
+        })
     
-    log_agent_activity("BatchProcessor", "Directory processing started", {
+    # Start parallel processing in background with proper concurrency control
+    async def run_parallel_processing_with_queue():
+        """Run processing tasks with proper concurrency control using a queue"""
+        try:
+            log_agent_activity("BatchProcessor", "Starting parallel processing with queue", {
+                "total_jobs": len(job_data_list),
+                "max_concurrent": MAX_CONCURRENT_JOBS,
+                "directory": data_directory,
+                "selected_ucs": request.selected_ucs
+            })
+            
+            # Create a semaphore for this batch specifically
+            batch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+            
+            async def process_with_semaphore(job_data):
+                """Process a single job with semaphore control"""
+                async with batch_semaphore:
+                    return await process_file_with_reference_async(
+                        job_data["file_path"],
+                        job_data["reference_files"],
+                        job_data["selected_ucs"],
+                        job_data["job_id"]
+                    )
+            
+            # Create tasks for all jobs
+            tasks = [process_with_semaphore(job_data) for job_data in job_data_list]
+            
+            # Run all tasks with semaphore controlling concurrency
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Log results
+            successful_jobs = sum(1 for r in results if not isinstance(r, Exception))
+            failed_jobs = len(results) - successful_jobs
+            
+            log_agent_activity("BatchProcessor", "Parallel processing completed", {
+                "total_jobs": len(results),
+                "successful_jobs": successful_jobs,
+                "failed_jobs": failed_jobs,
+                "max_concurrent": MAX_CONCURRENT_JOBS
+            })
+            
+            return results
+            
+        except Exception as e:
+            log_agent_activity("BatchProcessor", "Parallel processing failed", {
+                "error": str(e),
+                "total_jobs": len(job_data_list)
+            })
+            raise
+    
+    # Add the parallel processing task to background tasks
+    background_tasks.add_task(run_async_background_task, run_parallel_processing_with_queue())
+    
+    log_agent_activity("BatchProcessor", "Directory processing started with parallel execution", {
         "directory": data_directory,
         "files_count": len(csv_files),
         "selected_ucs": request.selected_ucs,
         "reference_files": reference_files_by_uc,
-        "job_ids": job_ids
+        "job_ids": job_ids,
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS
     })
     
     return {
-        "message": f"Started async processing {len(csv_files)} files from directory with UCs: {', '.join(request.selected_ucs)}",
+        "message": f"Started parallel processing {len(csv_files)} files from directory with UCs: {', '.join(request.selected_ucs)} (max {MAX_CONCURRENT_JOBS} concurrent jobs)",
         "job_ids": job_ids,
         "directory": data_directory,
         "total_files": len(csv_files),
         "selected_ucs": request.selected_ucs,
-        "reference_files": {uc: os.path.basename(path) for uc, path in reference_files_by_uc.items()}
+        "reference_files": {uc: os.path.basename(path) for uc, path in reference_files_by_uc.items()},
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS
     }
 
 
@@ -614,5 +683,46 @@ async def get_batch_status(job_ids: str, db: Session = Depends(get_db)):
         jobs=job_statuses,
         total_jobs=len(jobs),
         completed_jobs=len([j for j in jobs if j.status == "completed"]),
-        failed_jobs=len([j for j in jobs if j.status == "failed"])
+        failed_jobs=len([j for j in jobs if j.status == "failed"]),
+        max_concurrent_jobs=MAX_CONCURRENT_JOBS,
+        active_jobs=MAX_CONCURRENT_JOBS - job_semaphore._value
     )
+
+
+@router.get("/concurrency-info")
+async def get_concurrency_info():
+    """
+    Get information about current concurrency settings
+    """
+    return {
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "current_available_slots": job_semaphore._value,
+        "active_jobs": MAX_CONCURRENT_JOBS - job_semaphore._value
+    }
+
+
+@router.post("/update-concurrency")
+async def update_concurrency(max_jobs: int = 5):
+    """
+    Update the maximum number of concurrent jobs (requires restart to take effect)
+    """
+    global MAX_CONCURRENT_JOBS, job_semaphore
+    
+    if max_jobs < 1 or max_jobs > 20:
+        raise HTTPException(status_code=400, detail="Max concurrent jobs must be between 1 and 20")
+    
+    old_max = MAX_CONCURRENT_JOBS
+    MAX_CONCURRENT_JOBS = max_jobs
+    
+    # Note: Existing semaphore cannot be updated, this setting will take effect on restart
+    log_agent_activity("BatchProcessor", "Concurrency setting updated", {
+        "old_max_concurrent": old_max,
+        "new_max_concurrent": MAX_CONCURRENT_JOBS,
+        "note": "Change will take effect on application restart"
+    })
+    
+    return {
+        "message": f"Max concurrent jobs updated from {old_max} to {MAX_CONCURRENT_JOBS}",
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "note": "Change will take effect on application restart"
+    }

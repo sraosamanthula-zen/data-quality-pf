@@ -69,6 +69,8 @@ class BatchStatusResponse(BaseModel):
     total_jobs: int
     completed_jobs: int
     failed_jobs: int
+    max_concurrent_jobs: Optional[int] = None
+    active_jobs: Optional[int] = None
 
 
 class JobStatus(BaseModel):
