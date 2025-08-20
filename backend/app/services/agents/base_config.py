@@ -21,7 +21,7 @@ load_dotenv()
 # Configure detailed logging
 def setup_logging():
     """Setup comprehensive logging for the platform"""
-    log_dir = Path("logs")
+    log_dir = Path("../data/logs")
     log_dir.mkdir(exist_ok=True)
 
     # Create formatters

@@ -9,24 +9,18 @@ from datetime import datetime
 from pathlib import Path
 
 # Third-party imports
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 
 # Local application imports
+from app.core.config import settings
 from app.services.agents.base_config import log_agent_activity
 from app.db import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
 from app.schemas import UploadResponse
 
 router = APIRouter(prefix="/upload", tags=["upload"])
-
-# Get configuration from environment
-UPLOAD_DIR = Path(os.getenv("UPLOADS_DIRECTORY", "./uploads"))
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-REFERENCE_DIR = Path(os.getenv("REFERENCE_FILES_DIRECTORY", "./reference_files"))
-REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class DirectoryRequest(BaseModel):
@@ -85,15 +79,23 @@ async def upload_file(
     is_ref = is_reference.lower() == "true"
 
     try:
-        # Save uploaded file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{timestamp}_{file.filename}"
-        file_path = UPLOAD_DIR / safe_filename
+        # Determine destination based on file type
+        if is_ref:
+            # Save reference files to uploads directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"{timestamp}_{file.filename}"
+            file_path = settings.uploads_dir / safe_filename
+        else:
+            # For regular files, we'll save them temporarily first
+            # They will be moved to proper job folders during processing
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"{timestamp}_{file.filename}"
+            file_path = settings.uploads_dir / safe_filename
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Create job record
+        # Create job record with folder paths that will be created during processing
         job = JobRecord(
             filename=file.filename,
             file_path=str(file_path),
@@ -137,26 +139,48 @@ async def upload_file(
 
 
 @router.get("/preview-file")
-async def preview_file(filename: str, directory: Optional[str] = None):
-    """Get a preview of a file with first few rows (supports CSV, TSV mainly)"""
-    if directory:
-        data_directory = directory
-    else:
-        data_directory = os.getenv("INPUT_DIRECTORY", "./input_data")
-
-    file_path = os.path.join(data_directory, filename)
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-
-    file_extension = Path(filename).suffix.lower()
-
-    # Only support preview for CSV and TSV files
-    if file_extension not in [".csv", ".tsv"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Preview not supported for {file_extension} files. Only CSV and TSV files can be previewed.",
-        )
+async def preview_file(filepath: str = None, filename: str = None, directory: str = None):
+    """Preview a CSV file with limited rows"""
+    try:
+        # Determine the file path
+        if filepath:
+            file_path = Path(filepath)
+        elif filename and directory:
+            file_path = Path(directory) / filename
+        elif filename:
+            # Use default data directory if no directory specified
+            data_directory = os.getenv("INPUT_DIRECTORY", str(settings.inputs_dir))
+            file_path = Path(data_directory) / filename
+        else:
+            raise HTTPException(status_code=400, detail="Either filepath or filename must be provided")
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_extension = file_path.suffix.lower()
+        if file_extension not in ['.csv', '.tsv']:
+            raise HTTPException(status_code=400, detail="Only CSV and TSV files can be previewed")
+        
+        import pandas as pd
+        
+        # Determine delimiter
+        delimiter = '\t' if file_extension == '.tsv' else ','
+        
+        # Read only the first 100 rows for preview
+        df = pd.read_csv(file_path, nrows=100, delimiter=delimiter)
+        
+        # Get total row count efficiently
+        with open(file_path, 'r', encoding='utf-8') as f:
+            total_rows = sum(1 for line in f) - 1  # Subtract header row
+        
+        return {
+            "headers": df.columns.tolist(),
+            "rows": df.fillna('').astype(str).values.tolist(),
+            "totalRows": total_rows,
+            "filename": file_path.name
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error previewing file: {str(e)}")
 
     try:
         import csv
@@ -343,7 +367,7 @@ async def upload_reference_file(
         # Save reference file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_filename = f"{uc_type}_{timestamp}_{file.filename}"
-        file_path = REFERENCE_DIR / safe_filename
+        file_path = settings.uploads_dir / safe_filename
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -458,3 +482,164 @@ async def get_reference_file_history(uc_type: str, db: Session = Depends(get_db)
         "total_uploads": len(reference_files),
         "active_count": len([rf for rf in reference_files if rf.is_active]),
     }
+
+
+@router.post("/start-job-processing")
+async def start_job_processing(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Start processing a job using the JobProcessor with proper folder structure
+    """
+    from app.services.job_manager import JobProcessor
+    
+    # Get job record
+    job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    if job.status not in ["uploaded", "queued"]:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Job {job_id} cannot be processed. Current status: {job.status}"
+        )
+    
+    if not job.selected_ucs:
+        raise HTTPException(status_code=400, detail="No use cases selected for this job")
+    
+    # Parse selected use cases
+    selected_ucs = [uc.strip() for uc in job.selected_ucs.split(",")]
+    
+    async def run_job_workflow():
+        """Background task to execute job workflow using JobProcessor"""
+        from app.db import SessionLocal
+        job_db = SessionLocal()
+        
+        try:
+            # Create job processor
+            processor = JobProcessor(job_db)
+            
+            # If this is not a reference file, move it to the inputs folder
+            if not job.is_reference:
+                job_structure = processor.setup_job_folders(job_id)
+                
+                # Move uploaded file to inputs folder
+                uploaded_file = Path(job.file_path)
+                if uploaded_file.exists():
+                    input_file = job_structure.inputs_folder / job.filename
+                    shutil.move(str(uploaded_file), str(input_file))
+                    
+                    # Update job record with new file path
+                    job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                    if job_record:
+                        job_record.file_path = str(input_file)
+                        job_db.commit()
+            
+            # Execute the complete workflow
+            result = await processor.execute_job_workflow(job_id, selected_ucs)
+            
+            log_agent_activity(
+                "JobProcessor",
+                f"Job {job_id} workflow completed",
+                {"job_id": job_id, "result": result},
+            )
+            
+        except Exception as e:
+            log_agent_activity(
+                "JobProcessor",
+                f"Job {job_id} workflow failed",
+                {"job_id": job_id, "error": str(e)},
+                "error",
+            )
+            
+            # Update job status to failed
+            job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
+            if job_record:
+                job_record.status = "failed"
+                job_record.error_message = str(e)
+                job_record.completed_at = datetime.utcnow()
+                job_db.commit()
+        finally:
+            job_db.close()
+    
+    # Add task to background processing
+    background_tasks.add_task(run_job_workflow)
+    
+    # Update job status to processing
+    job.status = "queued"
+    job.started_at = datetime.utcnow()
+    db.commit()
+    
+    log_agent_activity(
+        "JobProcessor",
+        f"Started job {job_id} with JobProcessor",
+        {"job_id": job_id, "selected_ucs": selected_ucs},
+    )
+    
+    return {
+        "message": f"Job {job_id} started with JobProcessor",
+        "job_id": job_id,
+        "status": "queued",
+        "selected_ucs": selected_ucs,
+        "workflow_features": [
+            "Automatic folder structure creation",
+            "CSV file detection in inputs folder",
+            "Use case processing with proper temp folders",
+            "Final output organization",
+            "Comprehensive result archival"
+        ]
+    }
+
+
+@router.get("/list-directories")
+async def list_directories(path: str = ""):
+    """List available directories for browsing"""
+    try:
+        base_path = Path.home() if not path else Path(path)
+        if not base_path.exists() or not base_path.is_dir():
+            base_path = Path.home()
+        
+        directories = []
+        try:
+            for item in base_path.iterdir():
+                if item.is_dir() and not item.name.startswith('.'):
+                    directories.append(str(item.resolve()))
+        except PermissionError:
+            pass
+        
+        return {
+            "directories": sorted(directories),
+            "current_path": str(base_path.resolve())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing directories: {str(e)}")
+
+
+@router.get("/download-file")
+async def download_file(filepath: Optional[str] = None, filename: Optional[str] = None, directory: Optional[str] = None):
+    """Download a file from the specified path"""
+    try:
+        # Determine the file path
+        if filepath:
+            file_path = Path(filepath)
+        elif filename and directory:
+            file_path = Path(directory) / filename
+        else:
+            raise HTTPException(status_code=400, detail="Either filepath or both filename and directory must be provided")
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        if not file_path.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
+        
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=str(file_path),
+            filename=file_path.name,
+            media_type='application/octet-stream'
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")

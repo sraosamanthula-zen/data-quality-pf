@@ -1,0 +1,24 @@
+{
+  "UC4": {
+    "job_id": "a803ee5b-3fc9-45b0-a2d1-26830f85849a",
+    "input_file_path": "/workspaces/data-quality-pf/data/inputs/mcc/example_dataset_1.csv",
+    "output_file_path": "/workspaces/data-quality-pf/data/inputs/mcc/job_12_20250820_184041_job_a803ee5b_uc4_processed.csv",
+    "reference_file_path": "../data/uploads/UC4_20250820_182924_german_credit_data.csv",
+    "analysis_timestamp": "2025-08-20T18:40:41.474766",
+    "total_rows_original": 0,
+    "total_rows_processed": 0,
+    "total_columns": 0,
+    "duplicate_rows_removed": 0,
+    "duplicate_percentage": 0.0,
+    "exact_duplicates_found": 0,
+    "duplicate_patterns": {},
+    "most_duplicated_records": [],
+    "data_reduction_percentage": 0.0,
+    "quality_improvement_score": 0.0,
+    "uniqueness_score": 0.0,
+    "processing_time_seconds": 16.400013,
+    "success": true,
+    "error_message": null,
+    "recommendations": []
+  }
+}

@@ -188,60 +188,6 @@ async def start_background_job_recovery():
         )
 
 
-# Configuration from environment variables
-class Config:
-    # Input directory where files are read from
-    INPUT_DIRECTORY = os.getenv("INPUT_DIRECTORY", "./input_data")
-
-    # Output directory where processed files are written
-    OUTPUT_DIRECTORY = os.getenv("OUTPUT_DIRECTORY", "./output_data")
-
-    # Legacy directories (keeping for backward compatibility)
-    DATA_DIRECTORY = os.getenv("DATA_DIRECTORY", ".")
-    UPLOADS_DIRECTORY = os.getenv("UPLOADS_DIRECTORY", "./uploads")
-    REFERENCE_FILES_DIRECTORY = os.getenv(
-        "REFERENCE_FILES_DIRECTORY", "./reference_files"
-    )
-    STORAGE_DIRECTORY = os.getenv("STORAGE_DIRECTORY", "./storage")
-
-    # Result file naming
-    RESULT_SUFFIX = os.getenv("RESULT_SUFFIX", "_processed")
-    BATCH_PROCESSING = os.getenv("BATCH_PROCESSING", "true").lower() == "true"
-
-    # Supported file extensions (flexible for different file types)
-    SUPPORTED_EXTENSIONS = [".csv", ".xlsx", ".xls", ".tsv", ".json", ".parquet"]
-
-    @classmethod
-    def ensure_directories(cls):
-        """Ensure all required directories exist"""
-        directories = [
-            cls.INPUT_DIRECTORY,
-            cls.OUTPUT_DIRECTORY,
-            cls.UPLOADS_DIRECTORY,
-            cls.REFERENCE_FILES_DIRECTORY,
-            cls.STORAGE_DIRECTORY,
-        ]
-        for directory in directories:
-            Path(directory).mkdir(parents=True, exist_ok=True)
-            logger.info(f"📁 Directory ensured: {directory}")
-
-    @classmethod
-    def get_supported_files(cls, directory_path: str):
-        """Get all supported files in a directory"""
-        supported_files = []
-        if os.path.exists(directory_path):
-            for file in os.listdir(directory_path):
-                if any(file.lower().endswith(ext) for ext in cls.SUPPORTED_EXTENSIONS):
-                    # Skip already processed files
-                    if not file.endswith(f"{cls.RESULT_SUFFIX}.csv"):
-                        supported_files.append(file)
-        return supported_files
-
-
-# Global config instance
-config = Config()
-
-
 # FastAPI Application
 app = FastAPI(
     title="Agentic AI Data Quality Platform",

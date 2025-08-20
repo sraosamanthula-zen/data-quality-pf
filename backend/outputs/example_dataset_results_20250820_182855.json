@@ -1,0 +1,21 @@
+{
+  "UC1": {
+    "job_id": "ba6ae425-4a1e-4499-8923-aee330ba28fe",
+    "input_file_path": "../data/uploads/UC1_20250820_172303_MCC Test Data.csv",
+    "output_file_path": "../data/uploads/job_5_20250820_182819_uc1_completeness.csv",
+    "analysis_timestamp": "2025-08-20T18:28:19.427412",
+    "total_rows": 0,
+    "total_columns": 0,
+    "incomplete_rows": 0,
+    "incomplete_percentage": 0.0,
+    "columns_analyzed": [],
+    "sparse_columns": [],
+    "completeness_by_column": {},
+    "overall_quality_score": 0.0,
+    "quality_assessment": "ANALYSIS_COMPLETED",
+    "recommendations": [],
+    "processing_time_seconds": 35.999583,
+    "success": true,
+    "error_message": null
+  }
+}

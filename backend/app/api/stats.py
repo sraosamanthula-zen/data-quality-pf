@@ -99,11 +99,16 @@ async def get_app_config():
     from app.core.config import settings
 
     return {
+        "data_directory": str(settings.inputs_dir.resolve()),
+        "storage_directory": str(settings.outputs_dir.resolve()),
+        "uploads_directory": str(settings.uploads_dir.resolve()),
+        "reference_files_directory": str(settings.uploads_dir.resolve()),
+        "result_suffix": "_processed",
+        "batch_processing_enabled": True,
         "max_concurrent_jobs": settings.max_concurrent_jobs,
         "allowed_file_extensions": settings.allowed_file_extensions,
         "max_file_size_mb": settings.max_file_size_mb,
-        "upload_directory": str(settings.upload_dir),
-        "output_directory": str(settings.output_dir),
+        "temp_directory": str(settings.temp_dir.resolve()),
     }
 
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 # Local application imports
+from app.core.config import settings
 from app.db import AgentActivityLog, FileProcessingMetrics, JobRecord, get_db
 from app.schemas import JobResponse, JobStatistics
 
@@ -26,8 +27,8 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 async def list_output_files(db: Session = Depends(get_db)):
     """List all output files from completed jobs"""
 
-    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
-    allowed_base_dir = os.path.abspath("./outputs")
+    outputs_directory = str(settings.outputs_dir)
+    allowed_base_dir = os.path.abspath(str(settings.outputs_dir))
     abs_outputs_directory = os.path.abspath(outputs_directory)
     if not abs_outputs_directory.startswith(allowed_base_dir):
         return {
@@ -105,7 +106,7 @@ async def list_output_files(db: Session = Depends(get_db)):
 async def download_output_file(filename: str):
     """Download a specific output file (searches in batch directories)"""
 
-    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    outputs_directory = str(settings.outputs_dir)
 
     # Search for the file in all subdirectories
     file_path = None
@@ -133,7 +134,7 @@ async def preview_output_file(filename: str):
     """Preview the contents of an output file (searches in batch directories)"""
     import csv
 
-    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    outputs_directory = str(settings.outputs_dir)
 
     # Search for the file in all subdirectories
     file_path = None

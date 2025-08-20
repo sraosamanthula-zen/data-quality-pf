@@ -84,20 +84,29 @@ class UC1Agent:
         self.agent_name = "UC1_Agent"
         self.config = AgentConfig()
 
-        # Create agent with Azure OpenAI and DuckDB tools
+        # Get model configuration from settings
+        from app.core.config import settings
+        
+        # Create agent with configurable model and DuckDB tools
         self.agent = Agent(
             name="UC1 Incomplete Data Detection Agent",
-            model=self.config.get_azure_openai_model(temperature=0.1),
+            model=self.config.get_azure_openai_model(temperature=settings.agent_temperature),
             tools=[FileTools(), DuckDbTools(), ReasoningTools()],
             instructions=[
                 "You are a DATA COMPLETENESS EXPERT using DuckDB for efficient data analysis.",
                 "",
                 "Your primary task is to analyze CSV files for incomplete/sparse data patterns and create output files with flag columns.",
                 "",
+                "IMPORTANT CONSTRAINTS:",
+                f"- NEVER load more than {settings.max_prompt_rows} rows of raw data into your prompt/context",
+                "- Always use DuckDB aggregations and summaries for analysis",
+                "- Use LIMIT clauses when selecting sample data",
+                "- Focus on statistical summaries rather than raw data inspection",
+                "",
                 "CORE RESPONSIBILITIES:",
                 "1. Load CSV files into DuckDB for analysis",
-                "2. Identify rows with missing or incomplete data",
-                "3. Calculate completeness metrics for each column",
+                "2. Identify rows with missing or incomplete data using aggregated queries",
+                "3. Calculate completeness metrics for each column using COUNT() and statistical functions",
                 "4. Add flag columns to indicate data quality issues",
                 "5. Export results as a new CSV file",
                 "",
@@ -146,12 +155,24 @@ class UC1Agent:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Input file not found: {file_path}")
 
-            # Generate output filename
+            # Generate output filename with original name preserved
             input_path = Path(file_path)
+            original_stem = input_path.stem
             if unique_filename:
-                output_filename = f"{unique_filename}_uc1_completeness.csv"
-            else:
-                output_filename = f"{input_path.stem}_uc1_completeness.csv"
+                # Extract original filename from unique filename if it contains timestamp prefix
+                if unique_filename.startswith(('UC1_', 'UC4_')):
+                    # Remove UC prefix and timestamp to get original name
+                    parts = unique_filename.split('_', 3)
+                    if len(parts) >= 4:
+                        original_stem = parts[3].replace('.csv', '')
+                    else:
+                        original_stem = unique_filename.replace('.csv', '')
+                else:
+                    original_stem = unique_filename.replace('.csv', '')
+            
+            # Format: original_name_job_X_uc1_completeness.csv
+            job_short_id = job_id[:8]  # Use first 8 characters of UUID
+            output_filename = f"{original_stem}_job_{job_short_id}_uc1_completeness.csv"
 
             output_path = input_path.parent / output_filename
 

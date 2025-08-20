@@ -1,0 +1,24 @@
+{
+  "UC4": {
+    "job_id": "7be088df-d283-4a11-8841-5897c99498da",
+    "input_file_path": "/workspaces/data-quality-pf/data/inputs/mcc/MCC Test Data.csv",
+    "output_file_path": "",
+    "reference_file_path": "../data/uploads/UC4_20250820_182924_german_credit_data.csv",
+    "analysis_timestamp": "2025-08-20T18:29:46.088962",
+    "total_rows_original": 0,
+    "total_rows_processed": 0,
+    "total_columns": 0,
+    "duplicate_rows_removed": 0,
+    "duplicate_percentage": 0.0,
+    "exact_duplicates_found": 0,
+    "duplicate_patterns": {},
+    "most_duplicated_records": [],
+    "data_reduction_percentage": 0.0,
+    "quality_improvement_score": 0.0,
+    "uniqueness_score": 0.0,
+    "processing_time_seconds": 18.218965,
+    "success": false,
+    "error_message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 217486 tokens (216485 in the messages, 1001 in the functions). Please reduce the length of the messages or functions.",
+    "recommendations": []
+  }
+}

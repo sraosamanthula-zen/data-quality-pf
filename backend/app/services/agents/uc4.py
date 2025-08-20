@@ -95,37 +95,43 @@ class UC4Agent:
         self.agent_name = "UC4_Agent"
         self.config = AgentConfig()
 
-        # Create agent with Azure OpenAI and DuckDB tools
+        # Get model configuration from settings
+        from app.core.config import settings
+
+        # Create agent with configurable model and DuckDB tools
         self.agent = Agent(
             name="UC4 Duplicate Detection and Removal Agent",
-            model=self.config.get_azure_openai_model(temperature=0.1),
+            model=self.config.get_azure_openai_model(temperature=settings.agent_temperature),
             tools=[FileTools(), DuckDbTools(), ReasoningTools()],
             instructions=[
-                "You are a DUPLICATE DETECTION AND REMOVAL EXPERT using DuckDB for efficient data processing.",
+                "You are a DATA DEDUPLICATION EXPERT using DuckDB for efficient data processing.",
                 "",
-                "Your primary task is to detect and remove exact duplicates from CSV files using DuckDB and create processed output files.",
+                "Your primary task is to detect and remove exact duplicate rows from CSV files.",
+                "",
+                "IMPORTANT CONSTRAINTS:",
+                f"- NEVER load more than {settings.max_prompt_rows} rows of raw data into your prompt/context",
+                "- Always use DuckDB aggregations and summaries for analysis",
+                "- Use GROUP BY and COUNT() to identify duplicates efficiently",
+                "- Focus on statistical summaries rather than raw data inspection",
                 "",
                 "CORE RESPONSIBILITIES:",
-                "1. Load CSV files into DuckDB for analysis",
-                "2. Detect exact duplicate rows across all columns",
-                "3. Remove all duplicate occurrences, keeping only one copy of each unique record",
-                "4. Calculate comprehensive duplicate statistics and patterns",
-                "5. Export the processed (deduplicated) data as a new CSV file with '_processed' suffix",
+                "1. Load CSV files into DuckDB for efficient processing",
+                "2. Identify exact duplicate rows using DuckDB GROUP BY queries",
+                "3. Remove duplicates while preserving data integrity",
+                "4. Generate cleaned CSV files with statistics",
+                "5. Provide comprehensive duplicate analysis reports",
                 "",
-                "DUPLICATE DETECTION CRITERIA:",
-                "- EXACT DUPLICATES: Rows that are identical across ALL columns",
-                "- Use efficient SQL-based duplicate detection with ROW_NUMBER() or DISTINCT",
-                "- Preserve the first occurrence of each duplicate group",
-                "- Calculate detailed statistics about duplicate patterns",
+                "DUCKDB USAGE PATTERNS:",
+                "- Create table from CSV: CREATE TABLE data AS SELECT * FROM 'file.csv'",
+                "- Find duplicates: SELECT *, COUNT(*) as count FROM data GROUP BY ALL HAVING count > 1",
+                "- Remove duplicates: SELECT DISTINCT * FROM data",
+                "- Get stats: SELECT COUNT(*) as total, COUNT(DISTINCT *) as unique FROM data",
                 "",
-                "DEDUPLICATION PROCESS:",
-                "1. Identify all exact duplicate rows using SQL",
-                "2. Keep only the first occurrence of each duplicate group",
-                "3. Export the cleaned dataset",
-                "4. Provide detailed reporting on what was removed",
-                "",
-                "ALWAYS use DuckDB for efficient data processing and export results as CSV.",
-                "Focus on providing clear insights about duplicate patterns and data quality improvements.",
+                "OUTPUT REQUIREMENTS:",
+                "- Save cleaned data to new CSV file",
+                "- Report duplicate statistics",
+                "- Provide quality improvement metrics",
+                "- Include processing recommendations",
             ],
             show_tool_calls=True,
             markdown=True,
@@ -134,8 +140,8 @@ class UC4Agent:
     async def detect_and_remove_duplicates(
         self,
         input_file_path: str,
-        reference_file_path: str = None,
-        unique_filename: str = None,
+        reference_file_path: Optional[str] = None,
+        unique_filename: Optional[str] = None,
     ) -> UC4AnalysisResult:
         """
         Detect and remove duplicates from a CSV file using DuckDB
@@ -166,12 +172,24 @@ class UC4Agent:
             if not os.path.exists(input_file_path):
                 raise FileNotFoundError(f"Input file not found: {input_file_path}")
 
-            # Generate output filename
+            # Generate output filename with original name preserved
             input_path = Path(input_file_path)
+            original_stem = input_path.stem
             if unique_filename:
-                output_filename = f"{unique_filename}_uc4_processed.csv"
-            else:
-                output_filename = f"{input_path.stem}_uc4_processed.csv"
+                # Extract original filename from unique filename if it contains timestamp prefix
+                if unique_filename.startswith(('UC1_', 'UC4_')):
+                    # Remove UC prefix and timestamp to get original name
+                    parts = unique_filename.split('_', 3)
+                    if len(parts) >= 4:
+                        original_stem = parts[3].replace('.csv', '')
+                    else:
+                        original_stem = unique_filename.replace('.csv', '')
+                else:
+                    original_stem = unique_filename.replace('.csv', '')
+            
+            # Format: original_name_job_X_uc4_processed.csv
+            job_short_id = job_id[:8]  # Use first 8 characters of UUID
+            output_filename = f"{original_stem}_job_{job_short_id}_uc4_processed.csv"
 
             output_path = input_path.parent / output_filename
 
@@ -314,7 +332,7 @@ def get_uc4_agent() -> UC4Agent:
 
 
 async def run_uc4_analysis(
-    file_path: str, reference_file_path: str = None, unique_filename: str = None
+    file_path: str, reference_file_path: Optional[str] = None, unique_filename: Optional[str] = None
 ) -> UC4AnalysisResult:
     """
     Run UC4 duplicate detection analysis

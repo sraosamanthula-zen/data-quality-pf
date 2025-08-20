@@ -1,0 +1,21 @@
+{
+  "UC1": {
+    "job_id": "3ef26791-b2dd-49d5-87fb-0b757f5c9143",
+    "input_file_path": "../data/uploads/UC1_20250820_172303_MCC Test Data.csv",
+    "output_file_path": "",
+    "analysis_timestamp": "2025-08-20T18:28:19.366572",
+    "total_rows": 0,
+    "total_columns": 0,
+    "incomplete_rows": 0,
+    "incomplete_percentage": 0.0,
+    "columns_analyzed": [],
+    "sparse_columns": [],
+    "completeness_by_column": {},
+    "overall_quality_score": 0.0,
+    "quality_assessment": "FAILED",
+    "recommendations": [],
+    "processing_time_seconds": 15.171697,
+    "success": false,
+    "error_message": "This model's maximum context length is 128000 tokens. However, your messages resulted in 141763 tokens (140762 in the messages, 1001 in the functions). Please reduce the length of the messages or functions."
+  }
+}

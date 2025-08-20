@@ -27,9 +27,15 @@ class JobRecord(Base):
     filename: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
 
-    # Job configuration
+    # Job configuration and folder structure
     job_type: Mapped[str] = mapped_column(String, nullable=False)
-    selected_ucs: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    selected_ucs: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # e.g., "uc1,uc4"
+    use_case: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Current processing use case
+    
+    # Directory paths for this job
+    inputs_folder: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # inputs/job_<id>
+    outputs_folder: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # outputs/job_<id>
+    temp_folder: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # temp/job_<id>
 
     # Reference file information
     is_reference: Mapped[bool] = mapped_column(Boolean, default=False)
