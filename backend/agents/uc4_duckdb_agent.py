@@ -130,7 +130,8 @@ class UC4DuckDBAgent:
         self, 
         input_file_path: str,
         reference_file_path: Optional[str] = None,
-        output_directory: str = None
+        output_directory: str = None,
+        unique_filename: str = None
     ) -> UC4AnalysisResult:
         """
         Detect and remove exact duplicates from a CSV file and output processed results.
@@ -163,13 +164,22 @@ class UC4DuckDBAgent:
             
             # Set up output directory and file path using environment variables
             if output_directory is None:
-                output_directory = self.config.uc4_output_directory
+                # Use OUTPUT_DIRECTORY environment variable - single batch folder
+                base_output_dir = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                batch_dir = f"batch_{timestamp}"
+                output_directory = os.path.join(base_output_dir, batch_dir)
                 
             # Create output directory if it doesn't exist
             os.makedirs(output_directory, exist_ok=True)
             
-            input_filename = Path(input_file_path).stem
-            output_filename = f"{input_filename}{self.config.uc4_output_suffix}.csv"
+            # Use unique filename if provided, otherwise generate from input
+            if unique_filename:
+                output_filename = f"{unique_filename}_processed.csv"
+            else:
+                input_filename = Path(input_file_path).stem
+                output_filename = f"{input_filename}_processed.csv"
+            
             output_file_path = os.path.join(output_directory, output_filename)
             
             # Create analysis prompt for the agent

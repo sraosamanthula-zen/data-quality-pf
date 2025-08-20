@@ -110,7 +110,8 @@ class UC1DuckDBAgent:
         self, 
         reference_file_path: str,
         output_directory: str = None,
-        missing_threshold: float = 0.3
+        missing_threshold: float = 0.3,
+        unique_filename: str = None
     ) -> UC1AnalysisResult:
         """
         Analyze a CSV file for incomplete data and output results with flag columns.
@@ -139,10 +140,22 @@ class UC1DuckDBAgent:
             
             # Set up output directory and file path
             if output_directory is None:
-                output_directory = os.path.dirname(reference_file_path)
+                # Use OUTPUT_DIRECTORY environment variable - single batch folder
+                base_output_dir = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                batch_dir = f"batch_{timestamp}"
+                output_directory = os.path.join(base_output_dir, batch_dir)
+                
+                # Ensure output directory exists
+                os.makedirs(output_directory, exist_ok=True)
             
-            input_filename = Path(reference_file_path).stem
-            output_filename = f"{input_filename}_uc1_completeness_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            # Use unique filename if provided, otherwise generate from input
+            if unique_filename:
+                output_filename = f"{unique_filename}_processed.csv"
+            else:
+                input_filename = Path(reference_file_path).stem
+                output_filename = f"{input_filename}_processed.csv"
+            
             output_file_path = os.path.join(output_directory, output_filename)
             
             # Create analysis prompt for the agent

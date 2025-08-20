@@ -95,6 +95,7 @@ class Config:
     UPLOADS_DIRECTORY = os.getenv("UPLOADS_DIRECTORY", "./uploads")
     REFERENCE_FILES_DIRECTORY = os.getenv("REFERENCE_FILES_DIRECTORY", "./reference_files")
     STORAGE_DIRECTORY = os.getenv("STORAGE_DIRECTORY", "./storage")
+    OUTPUT_DIRECTORY = os.getenv("OUTPUT_DIRECTORY", "./outputs")
     RESULT_SUFFIX = os.getenv("RESULT_SUFFIX", "_processed")
     BATCH_PROCESSING = os.getenv("BATCH_PROCESSING", "true").lower() == "true"
     
@@ -104,7 +105,8 @@ class Config:
         directories = [
             cls.UPLOADS_DIRECTORY,
             cls.REFERENCE_FILES_DIRECTORY,
-            cls.STORAGE_DIRECTORY
+            cls.STORAGE_DIRECTORY,
+            cls.OUTPUT_DIRECTORY
         ]
         for directory in directories:
             Path(directory).mkdir(parents=True, exist_ok=True)
@@ -188,6 +190,7 @@ async def get_config():
         "uploads_directory": config.UPLOADS_DIRECTORY,
         "reference_files_directory": config.REFERENCE_FILES_DIRECTORY,
         "storage_directory": config.STORAGE_DIRECTORY,
+        "output_directory": config.OUTPUT_DIRECTORY,
         "result_suffix": config.RESULT_SUFFIX,
         "batch_processing_enabled": config.BATCH_PROCESSING
     }

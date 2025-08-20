@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Header from '@/components/Header';
 import Dashboard from '@/components/Dashboard';
 import FileUpload from '@/components/FileUpload';
 import JobList from '@/components/JobList';
+import OutputFilesSection from '@/components/OutputFilesSection';
 import { Job, JobStatistics } from '@/types/job';
 import { apiClient } from '@/lib/api';
 
@@ -17,6 +19,7 @@ export default function Home() {
     pending_jobs: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<string>('');
 
   const fetchJobs = async () => {
     try {
@@ -40,6 +43,7 @@ export default function Home() {
     const loadData = async () => {
       setLoading(true);
       await Promise.all([fetchJobs(), fetchJobStats()]);
+      setLastUpdated(new Date().toLocaleTimeString());
       setLoading(false);
     };
 
@@ -49,6 +53,7 @@ export default function Home() {
     const interval = setInterval(() => {
       fetchJobs();
       fetchJobStats();
+      setLastUpdated(new Date().toLocaleTimeString());
     }, 5000); // Poll every 5 seconds
 
     return () => clearInterval(interval);
@@ -57,41 +62,24 @@ export default function Home() {
   const handleJobUpdate = () => {
     fetchJobs();
     fetchJobStats();
+    setLastUpdated(new Date().toLocaleTimeString());
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 theme-transition">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading platform...</p>
+          <p className="text-gray-600 dark:text-gray-400 theme-transition">Loading platform...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 theme-transition">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="w-full px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <h1 className="text-xl font-bold text-gray-900">
-                  Agentic AI Data Quality Platform
-                </h1>
-                <p className="text-sm text-gray-600">Intelligent data processing and quality analysis</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <span className="text-xs text-gray-500">
-                Last updated: {new Date().toLocaleTimeString()}
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <Header lastUpdated={lastUpdated} />
 
       {/* Main Content */}
       <main className="w-full px-4 sm:px-6 lg:px-8 py-6">
@@ -101,10 +89,10 @@ export default function Home() {
 
           {/* File Processing Section */}
           <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 theme-transition">
               Reference File & Batch Processing
             </h2>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 theme-transition">
               Upload a reference file to define data quality standards, then process all files in the directory against this reference.
             </p>
             <FileUpload onJobUpdate={handleJobUpdate} />
@@ -112,11 +100,14 @@ export default function Home() {
 
           {/* Jobs List */}
           <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 theme-transition">
               Processing Jobs
             </h2>
             <JobList jobs={jobs} onJobUpdate={handleJobUpdate} />
           </div>
+
+          {/* Output Files Section */}
+          <OutputFilesSection onJobUpdate={handleJobUpdate} />
         </div>
       </main>
     </div>

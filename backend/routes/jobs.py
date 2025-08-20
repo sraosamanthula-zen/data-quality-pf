@@ -16,6 +16,156 @@ from models import JobResponse, JobStatistics
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+@router.get("/outputs")
+async def list_output_files(db: Session = Depends(get_db)):
+    """List all output files from completed jobs"""
+    import os
+    import json
+    
+    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    
+    if not os.path.exists(outputs_directory):
+        return {"files": [], "directory": outputs_directory, "message": "Output directory not found"}
+    
+    output_files = []
+    
+    # Get all completed jobs that have output files
+    completed_jobs = db.query(JobRecord).filter(
+        JobRecord.status == "completed",
+        JobRecord.results_json.isnot(None)
+    ).all()
+    
+    for job in completed_jobs:
+        try:
+            if job.results_json:
+                job_results = json.loads(job.results_json)
+                output_file_path = job_results.get("output_file_path")
+                unique_filename = job_results.get("unique_filename")
+                
+                if output_file_path and os.path.exists(output_file_path):
+                    stat = os.stat(output_file_path)
+                    filename = os.path.basename(output_file_path)
+                    
+                    # Determine batch info from path
+                    rel_path = os.path.relpath(output_file_path, outputs_directory)
+                    path_parts = rel_path.split(os.sep)
+                    
+                    batch_name = "individual"
+                    if len(path_parts) >= 2 and path_parts[0].startswith("batch_"):
+                        batch_name = path_parts[0]
+                    
+                    output_files.append({
+                        "filename": filename,
+                        "path": output_file_path,
+                        "size": stat.st_size,
+                        "created": stat.st_mtime,
+                        "status": "completed",
+                        "batch_name": batch_name,
+                        "uc_type": "processed",
+                        "relative_path": rel_path,
+                        "job_id": job.id,
+                        "original_filename": job.filename,
+                        "unique_filename": unique_filename
+                    })
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Skip jobs with invalid results JSON
+            continue
+    
+    # Sort by creation time (newest first)
+    output_files.sort(key=lambda x: x["created"], reverse=True)
+    
+    return {
+        "files": output_files,
+        "directory": outputs_directory,
+        "total_files": len(output_files),
+        "completed_jobs": len(completed_jobs)
+    }
+
+
+@router.get("/outputs/{filename}/download")
+async def download_output_file(filename: str):
+    """Download a specific output file (searches in batch directories)"""
+    import os
+    
+    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    
+    # Search for the file in all subdirectories
+    file_path = None
+    for root, dirs, files in os.walk(outputs_directory):
+        if filename in files:
+            file_path = os.path.join(root, filename)
+            break
+    
+    # Also check direct outputs directory
+    if not file_path:
+        direct_path = os.path.join(outputs_directory, filename)
+        if os.path.exists(direct_path):
+            file_path = direct_path
+    
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Output file not found: {filename}")
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="text/csv"
+    )
+
+
+@router.get("/outputs/{filename}/preview")
+async def preview_output_file(filename: str):
+    """Preview the contents of an output file (searches in batch directories)"""
+    import os
+    import csv
+    
+    outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    
+    # Search for the file in all subdirectories
+    file_path = None
+    for root, dirs, files in os.walk(outputs_directory):
+        if filename in files:
+            file_path = os.path.join(root, filename)
+            break
+    
+    # Also check direct outputs directory
+    if not file_path:
+        direct_path = os.path.join(outputs_directory, filename)
+        if os.path.exists(direct_path):
+            file_path = direct_path
+    
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Output file not found: {filename}")
+    
+    try:
+        headers = []
+        rows = []
+        total_rows = 0
+        
+        with open(file_path, 'r', encoding='utf-8') as csvfile:
+            # Create CSV reader
+            reader = csv.reader(csvfile)
+            
+            # Get headers
+            headers = next(reader, [])
+            
+            # Read up to 100 rows for preview
+            for i, row in enumerate(reader):
+                if i < 100:
+                    rows.append(row)
+                total_rows = i + 1
+        
+        return {
+            "headers": headers,
+            "rows": rows,
+            "totalRows": total_rows,
+            "filename": filename,
+            "file_path": file_path
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+
+
 @router.get("/statistics", response_model=JobStatistics)
 async def get_job_statistics(db: Session = Depends(get_db)):
     """Get overall job statistics and metrics"""
@@ -250,3 +400,36 @@ async def delete_job(job_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": f"Job {job_id} deleted successfully"}
+
+
+@router.get("/{job_id}/download")
+async def download_job_result(job_id: int, db: Session = Depends(get_db)):
+    """Download the result file for a specific job"""
+    job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Try to find the output file based on job filename
+    import os
+    
+    storage_directory = os.getenv("STORAGE_DIRECTORY", "./storage")
+    outputs_directory = os.path.join(storage_directory, "outputs")
+    
+    # Also check the 'outputs' directory at the root level
+    if not os.path.exists(outputs_directory):
+        outputs_directory = "./outputs"
+    
+    # Build expected output filename
+    result_suffix = os.getenv("RESULT_SUFFIX", "_processed")
+    base_filename = Path(job.filename).stem
+    output_filename = f"{base_filename}{result_suffix}.csv"
+    output_path = os.path.join(outputs_directory, output_filename)
+    
+    if not os.path.exists(output_path):
+        raise HTTPException(status_code=404, detail=f"Result file not found for job {job_id}")
+    
+    return FileResponse(
+        path=output_path,
+        filename=output_filename,
+        media_type="text/csv"
+    )

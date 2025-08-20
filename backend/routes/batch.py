@@ -209,8 +209,12 @@ async def process_file_with_reference_async(
         from agents.uc1_agent import run_uc1_analysis
         from agents.uc4_agent import run_uc4_analysis
         
-        # Create file metrics
+        # Create file metrics and generate unique filename for this job
         file_size = Path(file_path).stat().st_size
+        
+        # Generate unique filename based on job ID and timestamp
+        unique_filename = f"job_{job_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
         metrics = FileProcessingMetrics(
             job_id=job_id,
             file_size_bytes=file_size
@@ -218,13 +222,15 @@ async def process_file_with_reference_async(
         db.add(metrics)
         db.commit()
         
-        log_processing_step(job_id, "BatchProcessor", "File metrics recorded", {
-            "file_size_bytes": file_size
+        log_processing_step(job_id, "BatchProcessor", "File metrics recorded with unique filename", {
+            "file_size_bytes": file_size,
+            "unique_filename": unique_filename
         })
         
         all_results = {}
+        output_file_path = None
         
-        # Run selected UCs with proper async handling
+        # Run selected UCs with proper async handling and sequential processing
         for uc in selected_ucs:
             uc_start_time = datetime.now()
             log_processing_step(job_id, f"BatchProcessor_{uc}", f"Starting async {uc} analysis")
@@ -243,7 +249,11 @@ async def process_file_with_reference_async(
             try:
                 if uc == "UC1":
                     log_agent_activity("UC1", f"Starting async analysis for {filename}", {"job_id": job_id})
-                    uc1_result = await run_uc1_analysis(file_path, reference_file_path)
+                    uc1_result = await run_uc1_analysis(file_path, reference_file_path, unique_filename=unique_filename)
+                    
+                    # Store the output file path for tracking
+                    if hasattr(uc1_result, 'output_file_path'):
+                        output_file_path = uc1_result.output_file_path
                     
                     # Convert Pydantic model to dict for JSON serialization
                     if hasattr(uc1_result, 'dict'):
@@ -260,7 +270,15 @@ async def process_file_with_reference_async(
                     
                 elif uc == "UC4":
                     log_agent_activity("UC4", f"Starting async analysis for {filename}", {"job_id": job_id})
-                    uc4_result = await run_uc4_analysis(file_path, reference_file_path)
+                    
+                    # Use the output file from UC1 if it exists, otherwise use original file
+                    input_file_for_uc4 = output_file_path if output_file_path and os.path.exists(output_file_path) else file_path
+                    
+                    uc4_result = await run_uc4_analysis(input_file_for_uc4, reference_file_path, unique_filename=unique_filename)
+                    
+                    # Store the final output file path
+                    if hasattr(uc4_result, 'output_file_path'):
+                        output_file_path = uc4_result.output_file_path
                     
                     # Convert Pydantic model to dict and extract duplicate info
                     if hasattr(uc4_result, 'dict'):
@@ -328,8 +346,15 @@ async def process_file_with_reference_async(
             "result_file": str(result_path)
         })
         
-        # Update job with results
+        # Update job with results and output file path
         job.result_file_path = str(result_path)
+        if output_file_path:
+            # Store the actual output CSV file path in a new field
+            job.results_json = json.dumps({
+                "output_file_path": output_file_path,
+                "unique_filename": unique_filename,
+                "results": all_results
+            }, default=json_serializer)
         job.status = "completed"
         job.completed_at = datetime.utcnow()
         
