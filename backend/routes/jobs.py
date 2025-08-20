@@ -2,14 +2,20 @@
 Jobs management routes for the Data Quality Platform
 """
 
-from typing import List
-from pathlib import Path
+# Standard library imports
+import json
+import os
 from datetime import datetime
+from pathlib import Path
+from typing import List
+
+# Third-party imports
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
+# Local application imports
 from database import get_db, JobRecord, FileProcessingMetrics, AgentActivityLog
 from models import JobResponse, JobStatistics
 
@@ -19,12 +25,14 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.get("/outputs")
 async def list_output_files(db: Session = Depends(get_db)):
     """List all output files from completed jobs"""
-    import os
-    import json
     
     outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
+    allowed_base_dir = os.path.abspath("./outputs")
+    abs_outputs_directory = os.path.abspath(outputs_directory)
+    if not abs_outputs_directory.startswith(allowed_base_dir):
+        return {"files": [], "directory": outputs_directory, "message": "Invalid output directory"}
     
-    if not os.path.exists(outputs_directory):
+    if not os.path.exists(abs_outputs_directory):
         return {"files": [], "directory": outputs_directory, "message": "Output directory not found"}
     
     output_files = []
@@ -67,7 +75,7 @@ async def list_output_files(db: Session = Depends(get_db)):
                         "original_filename": job.filename,
                         "unique_filename": unique_filename
                     })
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError):
             # Skip jobs with invalid results JSON
             continue
     
@@ -85,7 +93,6 @@ async def list_output_files(db: Session = Depends(get_db)):
 @router.get("/outputs/{filename}/download")
 async def download_output_file(filename: str):
     """Download a specific output file (searches in batch directories)"""
-    import os
     
     outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
     
@@ -115,7 +122,6 @@ async def download_output_file(filename: str):
 @router.get("/outputs/{filename}/preview")
 async def preview_output_file(filename: str):
     """Preview the contents of an output file (searches in batch directories)"""
-    import os
     import csv
     
     outputs_directory = os.getenv("OUTPUT_DIRECTORY", "./outputs")
@@ -331,7 +337,6 @@ async def get_job_details(job_id: int, db: Session = Depends(get_db)):
     results = None
     if job.results_json:
         try:
-            import json
             results = json.loads(job.results_json)
         except Exception:
             results = {"raw_results": job.results_json}
@@ -387,7 +392,6 @@ async def delete_job(job_id: int, db: Session = Depends(get_db)):
     
     # Delete associated file
     try:
-        import os
         if os.path.exists(job.file_path):
             os.remove(job.file_path)
     except Exception as e:
@@ -410,7 +414,6 @@ async def download_job_result(job_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job not found")
     
     # Try to find the output file based on job filename
-    import os
     
     storage_directory = os.getenv("STORAGE_DIRECTORY", "./storage")
     outputs_directory = os.path.join(storage_directory, "outputs")

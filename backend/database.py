@@ -2,16 +2,34 @@
 Database configuration and models for the Data Quality Platform
 """
 
+# Standard library imports
 import os
+from contextlib import contextmanager
 from datetime import datetime
+
+# Third-party imports
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, Float
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
-# Database setup
+# Database setup with proper connection handling to avoid locking
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data_quality_platform.db")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+
+# SQLite connection parameters to prevent locking
+sqlite_connect_args = {
+    "check_same_thread": False,
+    "timeout": 30,  # 30 second timeout for busy database
+    "isolation_level": None,  # Use autocommit mode to prevent locks
+} if "sqlite" in DATABASE_URL else {}
+
+engine = create_engine(
+    DATABASE_URL, 
+    connect_args=sqlite_connect_args,
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=300,  # Recycle connections every 5 minutes
+    echo=False  # Set to True for SQL query debugging
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -86,11 +104,29 @@ class ReferenceFile(Base):
     is_active = Column(Boolean, default=True)
 
 
-# Database dependency
+# Database dependency with proper error handling
 def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+
+
+# Context manager for database operations
+@contextmanager
+def get_db_session():
+    """Context manager for database sessions with proper cleanup"""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
     finally:
         db.close()
 

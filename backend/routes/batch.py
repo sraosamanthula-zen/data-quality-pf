@@ -2,19 +2,23 @@
 Batch processing routes for the Data Quality Platform
 """
 
-import os
+# Standard library imports
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
+
+# Third-party imports
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import List, Optional
 
+# Local application imports
+from agents.base_config import log_agent_activity
 from database import get_db, JobRecord, FileProcessingMetrics
 from models import BatchStatusResponse
-from agents.base_config import log_agent_activity
 
 router = APIRouter(prefix="/batch", tags=["batch"])
 
@@ -133,7 +137,7 @@ async def restart_queued_jobs(queued_jobs: List[JobRecord]):
             "status": "completed"
         })
     except Exception as e:
-        logger("JobRecovery", f"Job restart batch failed", {
+        logger("JobRecovery", "Job restart batch failed", {
             "error": str(e),
             "job_count": len(queued_jobs)
         }, "error")
@@ -625,7 +629,7 @@ async def process_directory(
     db: Session = Depends(get_db)
 ):
     """
-    Process all CSV files from directory against reference files for selected UCs in parallel
+    Process all supported files from input directory against reference files for selected UCs in parallel
     """
     # DEBUG: Log incoming request
     print("🔥 DEBUG: Received batch processing request:")
@@ -633,11 +637,15 @@ async def process_directory(
     print(f"   Selected UCs: {request.selected_ucs}")
     print(f"   Reference paths: {request.reference_file_paths}")
     
-    # Use provided directory or default from environment
-    data_directory = request.directory_path if request.directory_path else os.getenv("DATA_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files")
+    # Use provided directory or default input directory from environment
+    input_directory = request.directory_path if request.directory_path else os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
+    output_directory = os.getenv("OUTPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/output_data")
     
-    if not os.path.exists(data_directory):
-        raise HTTPException(status_code=404, detail=f"Data directory not found: {data_directory}")
+    if not os.path.exists(input_directory):
+        raise HTTPException(status_code=404, detail=f"Input directory not found: {input_directory}")
+    
+    # Ensure output directory exists
+    os.makedirs(output_directory, exist_ok=True)
     
     # Validate UCs
     valid_ucs = ["UC1", "UC4"]
@@ -667,25 +675,31 @@ async def process_directory(
         
         reference_files_by_uc[uc] = ref_file.file_path
     
-    # Get all CSV files in the directory (excluding already processed ones)
+    # Get all supported files in the input directory (excluding already processed ones)
     result_suffix = os.getenv("RESULT_SUFFIX", "_processed")
-    csv_files = []
+    supported_extensions = ['.csv', '.xlsx', '.xls', '.tsv', '.json', '.parquet']
+    supported_files = []
     
-    for file in os.listdir(data_directory):
-        if file.endswith('.csv') and not file.endswith(f'{result_suffix}.csv'):
-            file_path = os.path.join(data_directory, file)
+    for file in os.listdir(input_directory):
+        # Check if file has supported extension
+        if any(file.lower().endswith(ext) for ext in supported_extensions):
+            file_path = os.path.join(input_directory, file)
             if os.path.isfile(file_path):
-                csv_files.append(file)
+                # Check if already processed (look in output directory)
+                base_name = Path(file).stem
+                processed_file = f"{base_name}{result_suffix}.csv"
+                if not os.path.exists(os.path.join(output_directory, processed_file)):
+                    supported_files.append(file)
     
-    if not csv_files:
-        raise HTTPException(status_code=404, detail=f"No unprocessed CSV files found in directory: {data_directory}")
+    if not supported_files:
+        raise HTTPException(status_code=404, detail=f"No unprocessed supported files found in directory: {input_directory}. Supported extensions: {', '.join(supported_extensions)}")
     
     # Create jobs for all files first
     job_ids = []
     job_data_list = []
     
-    for filename in csv_files:
-        file_path = os.path.join(data_directory, filename)
+    for filename in supported_files:
+        file_path = os.path.join(input_directory, filename)
         
         # Create placeholder job for immediate response
         job = JobRecord(
@@ -717,7 +731,8 @@ async def process_directory(
             log_agent_activity("BatchProcessor", "Starting parallel processing with queue", {
                 "total_jobs": len(job_data_list),
                 "max_concurrent": MAX_CONCURRENT_JOBS,
-                "directory": data_directory,
+                "input_directory": input_directory,
+                "output_directory": output_directory,
                 "selected_ucs": request.selected_ucs
             })
             
@@ -748,7 +763,9 @@ async def process_directory(
                 "total_jobs": len(results),
                 "successful_jobs": successful_jobs,
                 "failed_jobs": failed_jobs,
-                "max_concurrent": MAX_CONCURRENT_JOBS
+                "max_concurrent": MAX_CONCURRENT_JOBS,
+                "input_directory": input_directory,
+                "output_directory": output_directory
             })
             
             return results
@@ -764,22 +781,26 @@ async def process_directory(
     background_tasks.add_task(run_async_background_task, run_parallel_processing_with_queue())
     
     log_agent_activity("BatchProcessor", "Directory processing started with parallel execution", {
-        "directory": data_directory,
-        "files_count": len(csv_files),
+        "input_directory": input_directory,
+        "output_directory": output_directory,
+        "files_count": len(supported_files),
         "selected_ucs": request.selected_ucs,
         "reference_files": reference_files_by_uc,
         "job_ids": job_ids,
-        "max_concurrent_jobs": MAX_CONCURRENT_JOBS
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "supported_extensions": supported_extensions
     })
     
     return {
-        "message": f"Started parallel processing {len(csv_files)} files from directory with UCs: {', '.join(request.selected_ucs)} (max {MAX_CONCURRENT_JOBS} concurrent jobs)",
+        "message": f"Started parallel processing {len(supported_files)} files from input directory with UCs: {', '.join(request.selected_ucs)} (max {MAX_CONCURRENT_JOBS} concurrent jobs)",
         "job_ids": job_ids,
-        "directory": data_directory,
-        "total_files": len(csv_files),
+        "input_directory": input_directory,
+        "output_directory": output_directory,
+        "total_files": len(supported_files),
         "selected_ucs": request.selected_ucs,
         "reference_files": {uc: os.path.basename(path) for uc, path in reference_files_by_uc.items()},
-        "max_concurrent_jobs": MAX_CONCURRENT_JOBS
+        "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "supported_extensions": supported_extensions
     }
 
 
@@ -893,9 +914,16 @@ async def update_concurrency(max_jobs: int = 5):
 
 
 @router.post("/recover-jobs")
-async def manually_recover_jobs(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def manually_recover_jobs(
+    auto_restart: bool = False,
+    background_tasks: BackgroundTasks = None, 
+    db: Session = Depends(get_db)
+):
     """
     Manually trigger job recovery for stuck or queued jobs
+    
+    Args:
+        auto_restart: If True, will restart queued jobs automatically
     """
     # Find stuck jobs
     stuck_processing_statuses = ["processing", "processing_uc1", "processing_uc4", 
@@ -903,35 +931,44 @@ async def manually_recover_jobs(background_tasks: BackgroundTasks, db: Session =
     
     stuck_jobs = db.query(JobRecord).filter(JobRecord.status.in_(stuck_processing_statuses)).all()
     
-    # Reset stuck jobs to queued
+    # Mark stuck jobs as failed instead of queuing them
     for job in stuck_jobs:
-        log_agent_activity("JobRecovery", f"Manually resetting stuck job {job.id} from {job.status} to queued", {
+        log_agent_activity("JobRecovery", f"Manually marking stuck job {job.id} as failed", {
             "job_id": job.id,
             "filename": job.filename,
             "previous_status": job.status
         })
-        job.status = "queued"
+        job.status = "failed"
         job.started_at = None
+        job.completed_at = datetime.utcnow()
+        job.error_message = f"Manually marked as failed - was stuck in {job.status} state"
     
     db.commit()
     
     # Get all queued jobs
     queued_jobs = db.query(JobRecord).filter(JobRecord.status == "queued").all()
     
-    # Start recovery in background
-    if queued_jobs:
+    restart_count = 0
+    # Start recovery in background only if auto_restart is True
+    if auto_restart and queued_jobs and background_tasks:
         background_tasks.add_task(restart_queued_jobs, queued_jobs)
-    
+        restart_count = len(queued_jobs)
+        
     log_agent_activity("JobRecovery", "Manual job recovery initiated", {
-        "stuck_jobs_reset": len(stuck_jobs),
-        "total_queued_jobs": len(queued_jobs)
+        "stuck_jobs_failed": len(stuck_jobs),
+        "total_queued_jobs": len(queued_jobs),
+        "auto_restart_enabled": auto_restart,
+        "will_restart": restart_count
     })
     
     return {
-        "message": f"Job recovery initiated. Reset {len(stuck_jobs)} stuck jobs, restarting {len(queued_jobs)} queued jobs.",
-        "stuck_jobs_reset": len(stuck_jobs),
-        "queued_jobs_to_restart": len(queued_jobs),
-        "status": "recovery_started"
+        "message": f"Job recovery completed. Marked {len(stuck_jobs)} stuck jobs as failed. Found {len(queued_jobs)} queued jobs." + 
+                  (f" Restarting {restart_count} jobs in background." if auto_restart else " Use auto_restart=true to restart queued jobs."),
+        "stuck_jobs_failed": len(stuck_jobs),
+        "queued_jobs_found": len(queued_jobs),
+        "will_restart_jobs": restart_count,
+        "auto_restart_enabled": auto_restart,
+        "status": "recovery_completed"
     }
 
 

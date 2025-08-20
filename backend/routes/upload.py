@@ -2,17 +2,21 @@
 File upload routes for the Data Quality Platform
 """
 
+# Standard library imports
 import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
 
+# Third-party imports
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+# Local application imports
+from agents.base_config import log_agent_activity
 from database import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
 from models import UploadResponse
-from agents.base_config import log_agent_activity
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -35,10 +39,10 @@ async def upload_file(
     db: Session = Depends(get_db)
 ):
     """
-    Upload a CSV file and create a job for data quality analysis
+    Upload a file and create a job for data quality analysis
     
     Args:
-        file: CSV file to analyze
+        file: File to analyze (supports CSV, XLSX, XLS, TSV, JSON, Parquet)
         selected_ucs: Comma-separated list of UCs to run ("UC1", "UC4", or "UC1,UC4")
         is_reference: Whether this file is a reference file ("true" or "false")
         
@@ -46,9 +50,16 @@ async def upload_file(
         Job information (processing starts separately)
     """
     
+    # Supported file extensions
+    supported_extensions = ['.csv', '.xlsx', '.xls', '.tsv', '.json', '.parquet']
+    
     # Validate file type
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    file_extension = Path(file.filename).suffix.lower()
+    if file_extension not in supported_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type: {file_extension}. Supported types: {', '.join(supported_extensions)}"
+        )
     
     # Parse and validate selected UCs
     uc_list = [uc.strip() for uc in selected_ucs.split(",")]
@@ -99,6 +110,7 @@ async def upload_file(
                          {
                              "job_id": job.id, 
                              "filename": file.filename, 
+                             "file_extension": file_extension,
                              "file_size": file_size, 
                              "selected_ucs": uc_list,
                              "is_reference": is_ref
@@ -113,23 +125,26 @@ async def upload_file(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-
+        
+        
 @router.get("/preview-file")
 async def preview_file(filename: str, directory: str = None):
-    """Get a preview of a CSV file with first few rows"""
+    """Get a preview of a file with first few rows (supports CSV, TSV mainly)"""
     if directory:
         data_directory = directory
     else:
-        data_directory = os.getenv("DATA_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files")
+        data_directory = os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
     
     file_path = os.path.join(data_directory, filename)
     
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
     
-    if not filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files can be previewed")
+    file_extension = Path(filename).suffix.lower()
+    
+    # Only support preview for CSV and TSV files
+    if file_extension not in ['.csv', '.tsv']:
+        raise HTTPException(status_code=400, detail=f"Preview not supported for {file_extension} files. Only CSV and TSV files can be previewed.")
     
     try:
         import csv
@@ -137,6 +152,9 @@ async def preview_file(filename: str, directory: str = None):
         headers = []
         rows = []
         total_rows = 0
+        
+        # Determine delimiter based on file extension
+        delimiter = '\t' if file_extension == '.tsv' else ','
         
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:
             # Read file to count total rows
@@ -146,7 +164,7 @@ async def preview_file(filename: str, directory: str = None):
             csvfile.seek(0)
             
             # Read with CSV reader
-            csv_reader = csv.reader(csvfile)
+            csv_reader = csv.reader(csvfile, delimiter=delimiter)
             
             # Get headers
             headers = next(csv_reader, [])
@@ -164,6 +182,8 @@ async def preview_file(filename: str, directory: str = None):
         
         return {
             "filename": filename,
+            "file_extension": file_extension,
+            "delimiter": delimiter,
             "headers": headers,
             "rows": rows,
             "totalRows": total_rows
@@ -175,35 +195,43 @@ async def preview_file(filename: str, directory: str = None):
 
 @router.get("/directory-files")
 async def get_directory_files(directory: str = None):
-    """Get list of all files in the specified or configured data directory with their processing status"""
+    """Get list of all supported files in the specified or configured input directory with their processing status"""
     if directory:
         data_directory = directory
     else:
-        data_directory = os.getenv("DATA_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files")
+        data_directory = os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
     
     result_suffix = os.getenv("RESULT_SUFFIX", "_processed")
+    output_directory = os.getenv("OUTPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/output_data")
+    
+    # Supported file extensions (flexible for different file types)
+    supported_extensions = ['.csv', '.xlsx', '.xls', '.tsv', '.json', '.parquet']
     
     if not os.path.exists(data_directory):
-        raise HTTPException(status_code=404, detail=f"Data directory not found: {data_directory}")
+        raise HTTPException(status_code=404, detail=f"Input directory not found: {data_directory}")
     
     files = []
     for file in os.listdir(data_directory):
-        if file.endswith('.csv'):
+        # Check if file has supported extension
+        if any(file.lower().endswith(ext) for ext in supported_extensions):
             file_path = os.path.join(data_directory, file)
             try:
                 file_stat = os.stat(file_path)
                 
-                # Check if this file has been processed (has a corresponding _processed file)
-                processed_file = file.replace('.csv', f'{result_suffix}.csv')
-                processed = os.path.exists(os.path.join(data_directory, processed_file))
+                # Check if this file has been processed (look in output directory)
+                base_name = Path(file).stem
+                processed_file = f"{base_name}{result_suffix}.csv"
+                processed = os.path.exists(os.path.join(output_directory, processed_file))
                 
-                # Skip already processed files from the list
+                # Skip already processed files from the list (if they exist in input directory)
                 if not file.endswith(f'{result_suffix}.csv'):
                     files.append({
                         "name": file,
+                        "extension": Path(file).suffix.lower(),
                         "processed": processed,
                         "size": file_stat.st_size,
-                        "lastModified": datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                        "lastModified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                        "processedFile": processed_file if processed else None
                     })
             except OSError:
                 # Skip files that can't be accessed
@@ -211,9 +239,11 @@ async def get_directory_files(directory: str = None):
     
     return {
         "files": files,
-        "directory": data_directory,
+        "input_directory": data_directory,
+        "output_directory": output_directory,
         "total_files": len(files),
-        "default_directory": os.getenv("DATA_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files")
+        "supported_extensions": supported_extensions,
+        "default_input_directory": os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
     }
 
 

@@ -1,16 +1,15 @@
 # Core FastAPI and Web Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
 # Database and ORM
-sqlalchemy==2.0.23
-alembic==1.13.0
-sqlite3
+sqlalchemy>=2.0.23
+alembic>=1.13.0
 
 # AI Framework - Agno
-agno>=0.1.0
+agno>=1.7.11
 
 # AI Models and APIs
 openai>=1.3.7
@@ -18,35 +17,35 @@ anthropic>=0.8.1
 
 # Agno Dependencies
 lancedb>=0.9.0
-pylance>=3.0.0
 tantivy>=0.21.0
-sqlalchemy>=2.0.23
 
 # Data Processing
-pandas==2.1.4
-numpy==1.25.2
-openpyxl==3.1.2
+pandas>=2.1.4
+numpy>=1.25.2
+openpyxl>=3.1.2
+duckdb>=0.9.0
 
 # Job Scheduling and Background Tasks
-celery==5.3.4
-redis==5.0.1
-python-multipart==0.0.6
+celery>=5.3.4
+redis>=5.0.1
+python-multipart>=0.0.6
 
 # Utilities
-python-dotenv==1.0.0
-loguru==0.7.2
-rich==13.7.0
-
-# Development and Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-black==23.11.0
-flake8==6.1.0
-mypy==1.7.1
+python-dotenv>=1.0.0
+loguru>=0.7.2
+rich>=13.7.0
+requests>=2.32.4
 
 # Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
 
 # API Documentation
-python-markdown==3.5.1
+python-markdown>=3.5.1
+
+# Development and Testing (Optional - install with pip install -e ".[dev]")
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+black>=25.1.0
+flake8>=6.1.0
+mypy>=1.7.1

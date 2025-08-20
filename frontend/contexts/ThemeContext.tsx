@@ -14,15 +14,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Check localStorage and system preference on mount
-    const stored = localStorage.getItem('theme');
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    
-    if (stored === 'dark' || (!stored && systemPrefersDark)) {
-      setIsDark(true);
-      document.documentElement.classList.add('dark');
-    } else {
-      setIsDark(false);
-      document.documentElement.classList.remove('dark');
+    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('theme');
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        if (stored === 'dark' || (!stored && systemPrefersDark)) {
+          setIsDark(true);
+          document.documentElement.classList.add('dark');
+        } else {
+          setIsDark(false);
+          document.documentElement.classList.remove('dark');
+        }
+      } catch (e) {
+        // Fallback: do nothing or log error
+        setIsDark(false);
+        document.documentElement.classList.remove('dark');
+      }
     }
   }, []);
 

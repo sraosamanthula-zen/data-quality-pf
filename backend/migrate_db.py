@@ -2,8 +2,9 @@
 Database migration script to add missing columns to existing database
 """
 
-import sqlite3
+# Standard library imports
 import os
+import sqlite3
 from datetime import datetime
 
 def migrate_database():

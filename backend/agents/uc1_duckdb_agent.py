@@ -8,18 +8,21 @@ This module contains an agent that:
 4. Returns results in Pydantic model format
 """
 
+# Standard library imports
 import os
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
-from datetime import datetime
-import uuid
 
+# Third-party imports
 from agno.agent import Agent
-from agno.tools.file import FileTools
 from agno.tools.duckdb import DuckDbTools
+from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from pydantic import BaseModel, Field
 
+# Local application imports
 from .base_config import AgentConfig, log_agent_activity
 
 
@@ -136,23 +139,23 @@ class UC1DuckDBAgent:
         try:
             # Validate input file
             if not os.path.exists(reference_file_path):
-                raise FileNotFoundError(f"Input file not found: {reference_file_path}")
+                raise FileNotFoundError(f"Reference file not found: {reference_file_path}")
             
-            # Set up output directory and file path
+            # Set up output directory and file path using environment variables
             if output_directory is None:
-                # Use OUTPUT_DIRECTORY environment variable - single batch folder
-                base_output_dir = os.getenv("OUTPUT_DIRECTORY", "./outputs")
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                batch_dir = f"batch_{timestamp}"
-                output_directory = os.path.join(base_output_dir, batch_dir)
+                # Use OUTPUT_DIRECTORY environment variable
+                output_directory = os.getenv("OUTPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/output_data")
                 
                 # Ensure output directory exists
                 os.makedirs(output_directory, exist_ok=True)
             
-            # Use unique filename if provided, otherwise generate from input
+            # Use unique filename if provided, otherwise generate simple name from input
             if unique_filename:
-                output_filename = f"{unique_filename}_processed.csv"
+                # Remove any existing extension and add _processed.csv
+                base_name = unique_filename.split('.')[0] if '.' in unique_filename else unique_filename
+                output_filename = f"{base_name}_processed.csv"
             else:
+                # Use simple naming: original_filename_processed.csv
                 input_filename = Path(reference_file_path).stem
                 output_filename = f"{input_filename}_processed.csv"
             

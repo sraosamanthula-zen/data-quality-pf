@@ -2,9 +2,12 @@
 Pydantic models for API request/response schemas
 """
 
+# Standard library imports
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
+
+# Third-party imports
+from pydantic import BaseModel
 
 
 class JobResponse(BaseModel):
