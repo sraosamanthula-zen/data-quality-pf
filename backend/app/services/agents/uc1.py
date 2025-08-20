@@ -18,8 +18,6 @@ from typing import Dict, Optional
 # Third-party imports
 from agno.agent import Agent
 from agno.tools.duckdb import DuckDbTools
-from agno.tools.file import FileTools
-from agno.tools.reasoning import ReasoningTools
 from pydantic import BaseModel, Field
 
 # Local application imports
@@ -91,7 +89,7 @@ class UC1Agent:
         self.agent = Agent(
             name="UC1 Incomplete Data Detection Agent",
             model=self.config.get_azure_openai_model(temperature=settings.agent_temperature),
-            tools=[FileTools(), DuckDbTools(), ReasoningTools()],
+            tools=[DuckDbTools(inspect_queries=True, export_tables=True)],
             instructions=[
                 "You are a DATA COMPLETENESS EXPERT using DuckDB for efficient data analysis.",
                 "",
@@ -126,6 +124,7 @@ class UC1Agent:
             ],
             show_tool_calls=True,
             markdown=True,
+            reasoning=True,
         )
 
     async def analyze_file_for_completeness(
@@ -157,51 +156,53 @@ class UC1Agent:
 
             # Generate output filename with original name preserved
             input_path = Path(file_path)
-            original_stem = input_path.stem
             if unique_filename:
                 # Extract original filename from unique filename if it contains timestamp prefix
                 if unique_filename.startswith(('UC1_', 'UC4_')):
                     # Remove UC prefix and timestamp to get original name
                     parts = unique_filename.split('_', 3)
                     if len(parts) >= 4:
-                        original_stem = parts[3].replace('.csv', '')
+                        # Use extracted original name
+                        pass
                     else:
-                        original_stem = unique_filename.replace('.csv', '')
+                        # Use unique filename as is
+                        pass
                 else:
-                    original_stem = unique_filename.replace('.csv', '')
+                    # Use filename as is
+                    pass
             
-            # Format: original_name_job_X_uc1_completeness.csv
-            job_short_id = job_id[:8]  # Use first 8 characters of UUID
-            output_filename = f"{original_stem}_job_{job_short_id}_uc1_completeness.csv"
+            # Use same filename as input
+            original_filename = input_path.name
 
-            output_path = input_path.parent / output_filename
+            # Output to the outputs directory
+            from app.core.config import settings
+            output_path = settings.outputs_dir / original_filename
 
             # Prepare analysis instructions
             analysis_prompt = f"""
-            Analyze the CSV file at '{file_path}' for data completeness issues.
+            You are a data quality agent for UC1 (Completeness Analysis). 
+            Analyze the CSV file at '{file_path}' for data completeness and quality issues.
             
-            ANALYSIS REQUIREMENTS:
-            1. Load the CSV into DuckDB
-            2. Identify missing values, null values, and empty strings
-            3. Calculate completeness metrics for each column
-            4. Add the required flag columns to indicate data quality
+            REQUIRED TASKS:
+            1. Load the CSV file into DuckDB
+            2. Analyze each column for missing/incomplete data
+            3. Calculate completeness metrics
+            4. Add quality indicator columns
             5. Export the enhanced dataset to '{output_path}'
             
-            COMPLETENESS CRITERIA:
-            - Missing values: NULL, empty strings, 'N/A', 'null', whitespace-only
-            - Critical columns: Identify key columns that shouldn't have missing values
-            - Row completeness: Calculate percentage of non-missing values per row
+            COMPLETENESS ANALYSIS:
+            - Identify missing values: NULL, empty strings, 'N/A', 'null', whitespace-only
+            - Calculate column-wise completeness percentages
+            - Determine row-level completeness scores
+            - Flag rows with significant missing data
             
-            OUTPUT FORMAT:
-            - All original columns preserved
-            - Added columns: is_incomplete, missing_value_count, completeness_score, quality_flag
-            - Export as CSV to the specified output path
+            REQUIRED OUTPUT COLUMNS (add to original data):
+            - is_incomplete: BOOLEAN - true if row has significant missing data
+            - missing_value_count: INTEGER - count of missing values in the row
+            - completeness_score: FLOAT - percentage of complete fields (0-100)
+            - quality_flag: VARCHAR - 'HIGH', 'MEDIUM', 'LOW' based on completeness
             
-            Provide detailed analysis results including:
-            - Total rows and columns
-            - Completeness statistics by column
-            - Overall quality assessment
-            - Recommendations for data improvement
+            Use DuckDB to process and export the data. Ensure all original columns are preserved.
             """
 
             # Run the analysis
@@ -214,23 +215,87 @@ class UC1Agent:
             if not output_path.exists():
                 raise Exception("Output file was not created by the agent")
 
-            # TODO: Parse the agent response to extract actual metrics
-            # For now, return a basic result structure
+            # Parse the output CSV to extract actual metrics
+            try:
+                import pandas as pd
+                df = pd.read_csv(output_path)
+                
+                total_rows = len(df)
+                total_columns = len(df.columns)
+                
+                # Extract analysis columns if they exist
+                incomplete_rows = 0
+                if 'is_incomplete' in df.columns:
+                    incomplete_rows = df['is_incomplete'].sum() if pd.api.types.is_numeric_dtype(df['is_incomplete']) else len(df[df['is_incomplete']])
+                
+                incomplete_percentage = (incomplete_rows / total_rows * 100) if total_rows > 0 else 0.0
+                
+                # Calculate completeness by column (original columns only)
+                completeness_by_column = {}
+                analysis_columns = {'is_incomplete', 'missing_value_count', 'completeness_score', 'quality_flag'}
+                original_columns = [col for col in df.columns if col not in analysis_columns]
+                
+                for col in original_columns:
+                    non_null_count = df[col].notna().sum()
+                    completeness = (non_null_count / total_rows * 100) if total_rows > 0 else 0.0
+                    completeness_by_column[col] = completeness
+                
+                # Calculate overall quality score
+                if 'completeness_score' in df.columns:
+                    overall_quality_score = df['completeness_score'].mean()
+                else:
+                    overall_quality_score = sum(completeness_by_column.values()) / len(completeness_by_column) if completeness_by_column else 0.0
+                
+                # Identify sparse columns (< 80% complete)
+                sparse_columns = [col for col, completeness in completeness_by_column.items() if completeness < 80.0]
+                
+                # Generate quality assessment
+                if overall_quality_score >= 90:
+                    quality_assessment = "EXCELLENT"
+                elif overall_quality_score >= 75:
+                    quality_assessment = "GOOD"
+                elif overall_quality_score >= 50:
+                    quality_assessment = "FAIR"
+                else:
+                    quality_assessment = "POOR"
+                
+                # Generate recommendations
+                recommendations = []
+                if sparse_columns:
+                    recommendations.append(f"Consider improving data collection for sparse columns: {', '.join(sparse_columns[:3])}")
+                if incomplete_percentage > 20:
+                    recommendations.append("High percentage of incomplete rows detected - review data quality processes")
+                if overall_quality_score < 75:
+                    recommendations.append("Overall data quality is below recommended threshold - implement data validation")
+                
+            except Exception as parse_error:
+                print(f"Could not parse output CSV metrics: {parse_error}")
+                # Fallback to basic file analysis
+                total_rows = 0
+                total_columns = 0
+                incomplete_rows = 0
+                incomplete_percentage = 0.0
+                completeness_by_column = {}
+                overall_quality_score = 0.0
+                quality_assessment = "ANALYSIS_COMPLETED"
+                sparse_columns = []
+                recommendations = ["Analysis completed - review output file for detailed results"]
+
             result = UC1AnalysisResult(
                 job_id=job_id,
                 input_file_path=str(file_path),
                 output_file_path=str(output_path),
                 analysis_timestamp=start_time,
-                total_rows=0,  # Would be parsed from agent response
-                total_columns=0,  # Would be parsed from agent response
-                incomplete_rows=0,  # Would be parsed from agent response
-                incomplete_percentage=0.0,  # Would be parsed from agent response
-                columns_analyzed=[],  # Would be parsed from agent response
-                sparse_columns=[],  # Would be parsed from agent response
-                completeness_by_column={},  # Would be parsed from agent response
-                overall_quality_score=0.0,  # Would be parsed from agent response
-                quality_assessment="ANALYSIS_COMPLETED",  # Would be parsed from agent response
-                recommendations=[],  # Would be parsed from agent response
+                total_rows=total_rows,
+                total_columns=total_columns,
+                incomplete_rows=incomplete_rows,
+                incomplete_percentage=incomplete_percentage,
+                columns_analyzed=list(completeness_by_column.keys()),
+                sparse_columns=sparse_columns,
+                completeness_by_column=completeness_by_column,
+                overall_quality_score=overall_quality_score,
+                quality_assessment=quality_assessment,
+                recommendations=recommendations,
                 processing_time_seconds=processing_time,
                 success=True,
                 error_message=None,

@@ -445,8 +445,15 @@ async def download_job_result(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Try to find the output file based on job filename
-
+    # First try to use the result_file_path from the job record
+    if job.result_file_path and os.path.exists(job.result_file_path):
+        result_path = job.result_file_path
+        filename = os.path.basename(result_path)
+        return FileResponse(
+            path=result_path, filename=filename, media_type="text/csv"
+        )
+    
+    # Fallback to old logic for backwards compatibility
     storage_directory = os.getenv("STORAGE_DIRECTORY", "./storage")
     outputs_directory = os.path.join(storage_directory, "outputs")
 

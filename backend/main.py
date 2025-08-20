@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Third-party imports
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 # Local application imports
@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.services.agents.base_config import AgentConfig, log_agent_activity
 from app.db import init_db, JobRecord
 from app.api import jobs_router, upload_router, batch_router, stats_router
+from app.api.websocket import router as websocket_router
 
 # Load environment variables
 load_dotenv()
@@ -211,6 +212,7 @@ app.include_router(jobs_router)
 app.include_router(upload_router)
 app.include_router(batch_router)
 app.include_router(stats_router)
+app.include_router(websocket_router)
 
 
 @app.on_event("startup")

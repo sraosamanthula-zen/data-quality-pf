@@ -4,6 +4,7 @@ Batch processing routes for the Data Quality Platform
 
 # Standard library imports
 import json
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -68,25 +69,16 @@ async def process_directory(
             detail=f"Invalid UCs: {invalid_ucs}. Valid options: {valid_ucs}",
         )
 
-    # Create job records for each CSV file
+    # Create job records for each CSV file and automatically start processing
     job_ids = []
     for csv_file in csv_files:
-        # Copy file to uploads directory with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{timestamp}_{csv_file.name}"
-        uploaded_file_path = settings.uploads_dir / safe_filename
-        
-        # Copy the file
-        import shutil
-        shutil.copy2(csv_file, uploaded_file_path)
-        
-        # Create job record
+        # Create job record with pending status to auto-start
         job = JobRecord(
             filename=csv_file.name,
-            file_path=str(uploaded_file_path),
+            file_path=str(csv_file),  # Use original file path
             job_type=",".join(request.selected_ucs),
             selected_ucs=",".join(request.selected_ucs),
-            status="uploaded",
+            status="pending",  # Change to pending for auto-processing
             is_reference=False,
         )
         db.add(job)
@@ -98,55 +90,59 @@ async def process_directory(
     async def execute_batch_jobs():
         """Background task to process all jobs using JobProcessor"""
         from app.db import SessionLocal
-        job_db = SessionLocal()
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        job_db = None
         
         try:
+            job_db = SessionLocal()
             processor = JobProcessor(job_db)
             
-            for job_id in job_ids:
+            for i, job_id in enumerate(job_ids):
                 try:
-                    # Execute job workflow using job_manager
-                    result = await processor.execute_job_workflow(
+                    logger.info(f"Processing batch job {i+1}/{len(job_ids)}: {job_id}")
+                    
+                    # Add small delay between jobs to prevent resource exhaustion
+                    if i > 0:
+                        await asyncio.sleep(1.0)
+                    
+                    # Execute job workflow using job_manager with proper async handling
+                    result = await asyncio.create_task(processor.execute_job_workflow(
                         job_id, request.selected_ucs
-                    )
-                    print(f"Job {job_id} completed successfully: {result}")
+                    ))
+                    logger.info(f"Job {job_id} completed successfully: {result}")
                     
                 except Exception as e:
-                    print(f"Job {job_id} failed: {str(e)}")
+                    logger.error(f"Job {job_id} failed: {str(e)}")
                     
-                    # Update job status to failed
-                    job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                    if job_record:
-                        job_record.status = "failed"
-                        job_record.error_message = str(e)
-                        job_record.completed_at = datetime.utcnow()
-                        job_db.commit()
+                    # Update job status to failed with fresh session if needed
+                    try:
+                        if not job_db:
+                            job_db = SessionLocal()
+                        job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                        if job_record:
+                            job_record.status = "failed"
+                            job_record.error_message = str(e)
+                            job_record.completed_at = datetime.utcnow()
+                            job_db.commit()
+                    except Exception as db_error:
+                        logger.error(f"Failed to update job {job_id} status: {db_error}")
                         
         except Exception as e:
-            print(f"Batch processing failed: {str(e)}")
+            logger.error(f"Batch processing failed: {str(e)}")
         finally:
-            job_db.close()
+            if job_db:
+                job_db.close()
 
     # Add background task
     background_tasks.add_task(execute_batch_jobs)
-
-    # Prepare file information for response
-    files = []
-    for i, csv_file in enumerate(csv_files):
-        files.append({
-            "filename": csv_file.name,
-            "job_id": job_ids[i],
-            "status": "queued",
-            "size": csv_file.stat().st_size,
-        })
 
     return BatchProcessingResponse(
         message=f"Batch processing started for {len(csv_files)} files",
         batch_id=f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         total_files=len(csv_files),
-        job_ids=job_ids,
-        files=files,
-        selected_ucs=request.selected_ucs,
+        jobs_created=job_ids,
     )
 
 

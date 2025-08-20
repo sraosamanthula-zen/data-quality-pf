@@ -5,6 +5,7 @@ File upload routes for the Data Quality Platform
 # Standard library imports
 import os
 import shutil
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,9 @@ from typing import Optional
 from app.core.config import settings
 from app.services.agents.base_config import log_agent_activity
 from app.db import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
+
+# Setup logging
+logger = logging.getLogger(__name__)
 from app.schemas import UploadResponse
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -515,27 +519,34 @@ async def start_job_processing(
     async def run_job_workflow():
         """Background task to execute job workflow using JobProcessor"""
         from app.db import SessionLocal
-        job_db = SessionLocal()
+        job_db = None
         
         try:
+            # Create fresh database session for the background task
+            job_db = SessionLocal()
+            
             # Create job processor
             processor = JobProcessor(job_db)
             
+            # Get fresh job record
+            job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
+            if not job_record:
+                logger.error(f"Job {job_id} not found in database")
+                return
+            
             # If this is not a reference file, move it to the inputs folder
-            if not job.is_reference:
+            if not job_record.is_reference:
                 job_structure = processor.setup_job_folders(job_id)
                 
                 # Move uploaded file to inputs folder
-                uploaded_file = Path(job.file_path)
+                uploaded_file = Path(job_record.file_path)
                 if uploaded_file.exists():
-                    input_file = job_structure.inputs_folder / job.filename
+                    input_file = job_structure.inputs_folder / job_record.filename
                     shutil.move(str(uploaded_file), str(input_file))
                     
                     # Update job record with new file path
-                    job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                    if job_record:
-                        job_record.file_path = str(input_file)
-                        job_db.commit()
+                    job_record.file_path = str(input_file)
+                    job_db.commit()
             
             # Execute the complete workflow
             result = await processor.execute_job_workflow(job_id, selected_ucs)
@@ -554,15 +565,21 @@ async def start_job_processing(
                 "error",
             )
             
-            # Update job status to failed
-            job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
-            if job_record:
-                job_record.status = "failed"
-                job_record.error_message = str(e)
-                job_record.completed_at = datetime.utcnow()
-                job_db.commit()
+            # Update job status to failed with fresh session if needed
+            try:
+                if not job_db:
+                    job_db = SessionLocal()
+                job_record = job_db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                if job_record:
+                    job_record.status = "failed"
+                    job_record.error_message = str(e)
+                    job_record.completed_at = datetime.utcnow()
+                    job_db.commit()
+            except Exception as db_error:
+                logger.error(f"Failed to update job status to failed: {db_error}")
         finally:
-            job_db.close()
+            if job_db:
+                job_db.close()
     
     # Add task to background processing
     background_tasks.add_task(run_job_workflow)

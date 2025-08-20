@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ExclamationCircleIcon, FolderIcon, PlayIcon, CogIcon, EyeIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ExclamationCircleIcon, FolderIcon, PlayIcon, CogIcon, EyeIcon, XMarkIcon, ArrowDownTrayIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '@/lib/api';
 
 interface FileUploadProps {
@@ -68,7 +68,12 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   const [modalSize, setModalSize] = useState({ width: 1200, height: 600 });
   const [isResizing, setIsResizing] = useState(false);
   const [resizeStartPos, setResizeStartPos] = useState({ x: 0, y: 0 });
+  const [configExpanded, setConfigExpanded] = useState(false);
   const [resizeStartSize, setResizeStartSize] = useState({ width: 0, height: 0 });
+  const [showDirectoryBrowser, setShowDirectoryBrowser] = useState(false);
+  const [availableDirectories, setAvailableDirectories] = useState<string[]>([]);
+  const [currentBrowsePath, setCurrentBrowsePath] = useState<string>('');
+  const [loadingDirectories, setLoadingDirectories] = useState(false);
 
   // Fetch configuration, directory files, and reference files on component mount
   useEffect(() => {
@@ -98,7 +103,7 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   const fetchDirectoryFiles = async (directory?: string) => {
     try {
       const queryParam = directory ? `?directory=${encodeURIComponent(directory)}` : '';
-      const response = await apiClient.get(`/upload/directory-files${queryParam}`);
+      const response = await apiClient.get(`/upload/files${queryParam}`);
       setDirectoryFiles(response.data.files || []);
       if (!directory) {
         setDirectoryPath(response.data.directory);
@@ -127,11 +132,13 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   };
 
   const toggleUC = (uc: string) => {
-    setSelectedUCs(prev => 
-      prev.includes(uc) 
+    setSelectedUCs(prev => {
+      const newUCs = prev.includes(uc) 
         ? prev.filter(u => u !== uc)
-        : [...prev, uc]
-    );
+        : [...prev, uc];
+      // Always sort the UCs
+      return newUCs.sort();
+    });
   };
 
   const handleDirectoryChange = async () => {
@@ -174,6 +181,14 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
       return;
     }
 
+    if (!customDirectory.trim()) {
+      setBatchStatus({
+        type: 'error',
+        message: 'Please enter a valid directory path.',
+      });
+      return;
+    }
+
     // Check if selected UCs have reference files
     const missingRefFiles = selectedUCs.filter(uc => !referenceFiles[uc]);
     if (missingRefFiles.length > 0) {
@@ -189,7 +204,7 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
 
     try {
       const response = await apiClient.post('/batch/process-directory', {
-        directory_path: directoryPath,
+        directory_path: customDirectory,
         selected_ucs: selectedUCs,
         reference_file_paths: Object.fromEntries(
           selectedUCs.map(uc => [uc, referenceFiles[uc]?.filename])
@@ -201,8 +216,8 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
         message: `Batch processing started for ${response.data.total_files || 'multiple'} files with UCs: ${selectedUCs.join(', ')}`,
       });
       
-      // Refresh directory files and job list
-      fetchDirectoryFiles(directoryPath);
+      // Refresh directory files and job list without clearing current directory
+      fetchDirectoryFiles(customDirectory);
       onJobUpdate();
     } catch (error: any) {
       setBatchStatus({
@@ -343,8 +358,10 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
     setPreviewFile(filename);
     
     try {
+      const fullPath = `${directoryPath}/${filename}`;
       const response = await apiClient.get(`/upload/preview-file`, {
         params: {
+          filepath: fullPath,
           filename: filename,
           directory: directoryPath
         }
@@ -365,6 +382,66 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   const closePreview = () => {
     setPreviewFile(null);
     setPreviewData(null);
+  };
+
+  const handleDownloadFile = async (filename: string) => {
+    try {
+      const fullPath = `${directoryPath}/${filename}`;
+      const response = await apiClient.get('/upload/download-file', {
+        params: {
+          filepath: fullPath,
+          filename: filename,
+          directory: directoryPath
+        },
+        responseType: 'blob'
+      });
+      
+      // Create blob link to download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error('Error downloading file:', error);
+      setUploadStatus({
+        type: 'error',
+        message: error.response?.data?.detail || 'Failed to download file',
+      });
+    }
+  };
+
+  const fetchAvailableDirectories = async (path: string = '') => {
+    setLoadingDirectories(true);
+    try {
+      // Use config data_directory as default root if no path provided
+      const targetPath = path || (config?.data_directory || '');
+      const response = await apiClient.get('/upload/list-directories', {
+        params: { path: targetPath }
+      });
+      setAvailableDirectories(response.data.directories || []);
+      setCurrentBrowsePath(targetPath);
+    } catch (error) {
+      console.error('Error fetching directories:', error);
+      setAvailableDirectories([]);
+    } finally {
+      setLoadingDirectories(false);
+    }
+  };
+
+  const openDirectoryBrowser = () => {
+    setShowDirectoryBrowser(true);
+    fetchAvailableDirectories();
+  };
+
+  const selectDirectory = (directory: string) => {
+    setCustomDirectory(directory);
+    setShowDirectoryBrowser(false);
+    // Automatically load directory files when directory is selected
+    fetchDirectoryFiles(directory);
   };
 
   const handleResizeStart = (e: React.MouseEvent) => {
@@ -424,26 +501,57 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
   return (
     <div className="space-y-6">
       {/* Configuration Display */}
-      {config && (
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-4 shadow-sm theme-transition">
-          <div className="flex items-center space-x-2 mb-3">
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-4 shadow-sm theme-transition">
+        <div 
+          className="flex items-center justify-between cursor-pointer" 
+          onClick={() => setConfigExpanded(!configExpanded)}
+        >
+          <div className="flex items-center space-x-2">
             <div className="w-8 h-8 bg-blue-100 dark:bg-blue-800 rounded-lg flex items-center justify-center theme-transition">
               <CogIcon className="h-4 w-4 text-blue-600 dark:text-blue-300" />
             </div>
             <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100 theme-transition">Platform Configuration</h3>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
-              <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Storage Directory</div>
-              <div className="text-xs text-blue-700 dark:text-blue-300 font-mono break-all theme-transition">{config.storage_directory}</div>
-            </div>
-            <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
-              <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Result Suffix</div>
-              <div className="text-xs text-blue-700 dark:text-blue-300 font-mono theme-transition">{config.result_suffix}</div>
-            </div>
-          </div>
+          <ChevronDownIcon className={`h-4 w-4 text-blue-600 dark:text-blue-300 transition-transform duration-200 ${configExpanded ? 'rotate-180' : ''}`} />
         </div>
-      )}
+        
+        {configExpanded && (
+          <div className="mt-3">
+            {config ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Data Directory</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono break-all theme-transition">{config.data_directory || 'Not configured'}</div>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Storage Directory</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono break-all theme-transition">{config.storage_directory || 'Not configured'}</div>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Result Suffix</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono theme-transition">{config.result_suffix || 'Not configured'}</div>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Uploads Directory</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono break-all theme-transition">{config.uploads_directory || 'Not configured'}</div>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Reference Files Directory</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono break-all theme-transition">{config.reference_files_directory || 'Not configured'}</div>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                  <div className="text-xs font-medium text-blue-800 dark:text-blue-200 mb-1 theme-transition">Batch Processing</div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300 font-mono theme-transition">{config.batch_processing_enabled ? 'Enabled' : 'Disabled'}</div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white/60 dark:bg-gray-800/60 rounded-md p-3 border border-blue-100 dark:border-blue-800 theme-transition">
+                <div className="text-xs text-blue-600 dark:text-blue-300 theme-transition">Loading configuration...</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* UC Selection with Reference File Upload */}
       <div>
@@ -581,7 +689,7 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
         </div>
 
         <div className="mt-3 text-xs text-blue-600 dark:text-blue-400 theme-transition">
-          Selected UCs: {selectedUCs.length > 0 ? selectedUCs.join(', ') : 'None selected'}
+          Selected UCs: {selectedUCs.length > 0 ? selectedUCs.sort().join(', ') : 'None selected'}
         </div>
       </div>
 
@@ -609,14 +717,17 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
         </div>
       )}
 
-      {/* Directory Input & Batch Processing */}
+      {/* Batch Processing */}
       <div>
         <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3 theme-transition">
-          Directory Processing
+          Batch Processing
         </h3>
+        <p className="text-xs text-gray-600 dark:text-gray-400 mb-4 theme-transition">
+          Process all CSV files in the configured directory using the selected analysis types and their reference files.
+        </p>
         
         {/* Directory Input */}
-        <div className="space-y-3">
+        <div className="space-y-3 mb-6">
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 theme-transition">Directory Path</label>
             <div className="flex space-x-2">
@@ -628,10 +739,19 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                 className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100 theme-transition"
               />
               <button
-                onClick={handleDirectoryChange}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 theme-transition"
+                onClick={openDirectoryBrowser}
+                className="px-3 py-2 bg-gray-600 text-white text-sm rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 theme-transition"
+                title="Browse directories"
               >
-                Set Directory
+                <FolderIcon className="h-4 w-4" />
+              </button>
+              <button
+                onClick={startBatchProcessing}
+                disabled={processingBatch || selectedUCs.length === 0 || !customDirectory}
+                className="flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white text-sm font-medium rounded-md transition-colors shadow-sm"
+              >
+                <PlayIcon className="h-4 w-4" />
+                <span>{processingBatch ? 'Processing...' : 'Start Batch Processing'}</span>
               </button>
             </div>
             {config && (
@@ -639,27 +759,26 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                 Default: {config.data_directory}
               </p>
             )}
+            {selectedUCs.length === 0 && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1 theme-transition">Please select at least one analysis type (UC1 or UC4)</p>
+            )}
+            {!customDirectory && selectedUCs.length > 0 && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1 theme-transition">Please enter a directory path first</p>
+            )}
           </div>
-
-          {/* Directory Files & Processing */}
-          {directoryPath && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 theme-transition">
-                    Files in Directory ({directoryFiles.length} files found)
-                  </h4>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 theme-transition">{directoryPath}</p>
-                </div>
-                <button
-                  onClick={startBatchProcessing}
-                  disabled={processingBatch || selectedUCs.length === 0 || directoryFiles.length === 0}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  <PlayIcon className="h-4 w-4" />
-                  <span>{processingBatch ? 'Processing...' : 'Start Processing'}</span>
-                </button>
+        </div>
+        
+        {/* Directory Files & Processing */}
+        {directoryPath && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 theme-transition">
+                  Files in Directory ({directoryFiles.length} files found)
+                </h4>
+                <p className="text-xs text-gray-600 dark:text-gray-400 theme-transition">{directoryPath}</p>
               </div>
+            </div>
 
               {/* Files List - Tile Layout */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3 max-h-96 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-800 rounded-lg theme-transition">
@@ -677,6 +796,16 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                           title="Preview file"
                         >
                           <EyeIcon className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadFile(file.name);
+                          }}
+                          className="bg-green-100 dark:bg-green-900 hover:bg-green-200 dark:hover:bg-green-800 text-green-600 dark:text-green-300 hover:text-green-800 dark:hover:text-green-200 rounded-full p-1 transition-colors theme-transition"
+                          title="Download file"
+                        >
+                          <ArrowDownTrayIcon className="h-3 w-3" />
                         </button>
                         {file.processed ? (
                           <span className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-xs rounded-full font-medium theme-transition">
@@ -718,7 +847,6 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
               </div>
             </div>
           )}
-        </div>
 
         {/* Batch Status */}
         {batchStatus.type && (
@@ -832,9 +960,9 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
 
             {/* Resize Handle */}
             <div
-              className="absolute bottom-0 right-0 w-4 h-4 cursor-nw-resize bg-gray-300 hover:bg-gray-400 transition-colors"
+              className="absolute bottom-0 right-0 w-4 h-4 cursor-nw-resize bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors theme-transition"
               style={{
-                background: 'linear-gradient(-45deg, transparent 0%, transparent 30%, #9CA3AF 30%, #9CA3AF 40%, transparent 40%, transparent 60%, #9CA3AF 60%, #9CA3AF 70%, transparent 70%)',
+                background: 'linear-gradient(-45deg, transparent 0%, transparent 30%, currentColor 30%, currentColor 40%, transparent 40%, transparent 60%, currentColor 60%, currentColor 70%, transparent 70%)',
                 borderBottomRightRadius: '0.5rem'
               }}
               onMouseDown={handleResizeStart}
@@ -846,15 +974,15 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
 
       {/* Reference File History Modal */}
       {showHistory && referenceHistory[showHistory] && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70 flex items-center justify-center z-50 theme-transition">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto shadow-2xl theme-transition">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-gray-900">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 theme-transition">
                 {showHistory} Reference File History
               </h3>
               <button
                 onClick={closeHistory}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 theme-transition"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -863,7 +991,7 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
             </div>
             
             <div className="space-y-3">
-              <div className="text-sm text-gray-600 mb-3">
+              <div className="text-sm text-gray-600 dark:text-gray-300 mb-3 theme-transition">
                 Total uploads: {referenceHistory[showHistory].total_uploads} | 
                 Active: {referenceHistory[showHistory].active_count}
               </div>
@@ -902,6 +1030,51 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                   <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 theme-transition">{file.description}</p>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Directory Browser Modal */}
+      {showDirectoryBrowser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70 flex items-center justify-center z-50 theme-transition">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 max-h-96 overflow-y-auto shadow-2xl theme-transition">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 theme-transition">
+                Browse Directories
+              </h3>
+              <button
+                onClick={() => setShowDirectoryBrowser(false)}
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 theme-transition"
+              >
+                <XMarkIcon className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              {loadingDirectories ? (
+                <div className="text-center py-4">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 dark:border-blue-400 mx-auto theme-transition"></div>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mt-2 theme-transition">Loading directories...</p>
+                </div>
+              ) : availableDirectories.length > 0 ? (
+                availableDirectories.map((directory, index) => (
+                  <button
+                    key={index}
+                    onClick={() => selectDirectory(directory)}
+                    className="w-full text-left px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors theme-transition"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <FolderIcon className="h-4 w-4 text-blue-500 dark:text-blue-400 theme-transition" />
+                      <span className="text-sm text-gray-900 dark:text-gray-100 theme-transition">{directory}</span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-4">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 theme-transition">No directories found</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -8,8 +8,10 @@ Handles:
 - Result storage and archival
 """
 
+import json
 import shutil
 import logging
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -40,6 +42,37 @@ class JobProcessor:
     
     def __init__(self, db_session: Session):
         self.db = db_session
+    
+    async def _broadcast_job_update(self, job_record):
+        """Broadcast job status updates via WebSocket"""
+        try:
+            from app.websocket_manager import websocket_manager
+            
+            job_data = {
+                "id": job_record.id,
+                "filename": job_record.filename,
+                "status": job_record.status,
+                "created_at": job_record.created_at.isoformat() if job_record.created_at else None,
+                "completed_at": job_record.completed_at.isoformat() if job_record.completed_at else None,
+                "error_message": job_record.error_message,
+                "quality_score": job_record.quality_score,
+                "selected_ucs": job_record.selected_ucs
+            }
+            
+            await websocket_manager.broadcast_job_update(job_data)
+        except Exception as e:
+            logger.error(f"Error broadcasting job update: {e}")
+    
+    async def _broadcast_stats_update(self):
+        """Broadcast statistics updates via WebSocket"""
+        try:
+            from app.websocket_manager import websocket_manager
+            from app.api.stats import get_statistics
+            
+            stats = await get_statistics()
+            await websocket_manager.broadcast_stats_update(stats.dict())
+        except Exception as e:
+            logger.error(f"Error broadcasting stats update: {e}")
     
     def setup_job_folders(self, job_id: int) -> JobFolderStructure:
         """
@@ -188,86 +221,118 @@ class JobProcessor:
     async def execute_job_workflow(self, job_id: int, selected_use_cases: List[str]) -> Dict:
         """
         Execute the complete job workflow:
-        1. Setup job folders
-        2. Detect CSV files in inputs
-        3. Process each CSV with selected use cases
-        4. Store results and manage temp/output folders
+        1. Get job record and file path
+        2. Process file with selected use cases directly
+        3. Store results in database
         """
         logger.info(f"Starting job workflow for job {job_id} with use cases: {selected_use_cases}")
         
-        # Setup folder structure
-        job_structure = self.setup_job_folders(job_id)
-        
-        # Update job record with folder paths
+        # Get job record
         job_record = self.db.query(JobRecord).filter(JobRecord.id == job_id).first()
-        if job_record:
-            job_record.inputs_folder = str(job_structure.inputs_folder)
-            job_record.outputs_folder = str(job_structure.outputs_folder)
-            job_record.temp_folder = str(job_structure.temp_folder)
-            self.db.commit()
+        if not job_record:
+            raise ValueError(f"Job {job_id} not found")
         
-        # Detect CSV files
-        csv_files = self.detect_csv_files(job_structure.inputs_folder)
-        job_structure.csv_files = csv_files
+        # Check if file exists
+        file_path = Path(job_record.file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Input file not found: {file_path}")
         
-        if not csv_files:
-            logger.warning(f"No CSV files found in {job_structure.inputs_folder}")
-            return {"status": "no_files", "message": "No CSV files found to process"}
+        # Update job status to processing
+        job_record.status = "processing"
+        self.db.commit()
+        
+        # Broadcast job status update
+        await self._broadcast_job_update(job_record)
+        
+        # Add a small delay to ensure the processing status is visible
+        await asyncio.sleep(0.5)
         
         # Process each use case
         results = {}
+        final_result = None
         
         for use_case in selected_use_cases:
             logger.info(f"Processing use case: {use_case}")
             
             # Update job record with current use case
-            if job_record:
-                job_record.use_case = use_case
-                job_record.status = f"processing_{use_case}"
-                self.db.commit()
-            
-            # Create use case temp folder
-            uc_temp_folder = self.create_use_case_temp_folder(job_structure.temp_folder, use_case)
-            
-            # Get reference file if needed
-            reference_file = None
-            if use_case.lower() == "uc1":
-                reference_file = self.get_reference_file(use_case.lower())
-            
-            # Process each CSV file
-            uc_results = []
-            for csv_file in csv_files:
-                try:
-                    if use_case.lower() == "uc1":
-                        result = await self.process_csv_with_uc1(
-                            csv_file, reference_file, uc_temp_folder, job_id
-                        )
-                    elif use_case.lower() == "uc4":
-                        result = await self.process_csv_with_uc4(
-                            csv_file, uc_temp_folder, job_id
-                        )
-                    else:
-                        logger.error(f"Unknown use case: {use_case}")
-                        continue
-                    
-                    uc_results.append(result)
-                    logger.info(f"Successfully processed {csv_file} with {use_case}")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing {csv_file} with {use_case}: {str(e)}")
-                    continue
-            
-            results[use_case] = uc_results
-        
-        # Save final output to job's output folder
-        await self.save_final_output(job_structure, results, selected_use_cases)
-        
-        # Update job status
-        if job_record:
-            job_record.status = "completed"
-            job_record.completed_at = datetime.utcnow()
-            job_record.use_case = None  # Clear current use case
+            job_record.status = f"processing_{use_case.lower()}"
             self.db.commit()
+            
+            # Broadcast status update
+            await self._broadcast_job_update(job_record)
+            
+            # Small delay to ensure status is visible
+            await asyncio.sleep(0.2)
+            
+            try:
+                if use_case.lower() == "uc1":
+                    # Wrap the analysis in asyncio.create_task to avoid blocking
+                    result = await asyncio.create_task(run_uc1_analysis(
+                        file_path=str(file_path),
+                        unique_filename=f"{file_path.stem}_{job_id}"
+                    ))
+                elif use_case.lower() == "uc4":
+                    # Wrap the analysis in asyncio.create_task to avoid blocking
+                    result = await asyncio.create_task(run_uc4_analysis(
+                        file_path=str(file_path),
+                        unique_filename=f"{file_path.stem}_{job_id}"
+                    ))
+                else:
+                    logger.error(f"Unknown use case: {use_case}")
+                    continue
+                
+                results[use_case] = result
+                final_result = result  # Keep last result as final
+                logger.info(f"Successfully processed {file_path} with {use_case}")
+                
+                # Update status after each use case completes
+                job_record.status = f"completed_{use_case.lower()}"
+                self.db.commit()
+                await self._broadcast_job_update(job_record)
+                await asyncio.sleep(0.1)  # Brief pause for status visibility
+                
+            except Exception as e:
+                logger.error(f"Error processing {file_path} with {use_case}: {str(e)}")
+                job_record.status = "failed"
+                job_record.error_message = str(e)
+                job_record.completed_at = datetime.utcnow()
+                self.db.commit()
+                await self._broadcast_job_update(job_record)
+                await self._broadcast_stats_update()
+                raise
+        
+        # Update job with final results and metrics
+        if final_result and hasattr(final_result, 'output_file_path'):
+            job_record.result_file_path = final_result.output_file_path
+            job_record.results = json.dumps({
+                "output_file_path": final_result.output_file_path,
+                "processing_details": str(results)
+            })
+            
+            # Update job metrics based on result type
+            from app.services.agents.uc1 import UC1AnalysisResult
+            from app.services.agents.uc4 import UC4AnalysisResult
+            
+            if isinstance(final_result, UC1AnalysisResult):
+                job_record.quality_score = final_result.overall_quality_score
+                job_record.is_sparse = final_result.incomplete_percentage > 20  # Consider >20% incomplete as sparse
+                job_record.total_rows_processed = final_result.total_rows
+                job_record.total_rows_original = final_result.total_rows
+            elif isinstance(final_result, UC4AnalysisResult):
+                job_record.has_duplicates = final_result.duplicate_percentage > 0
+                job_record.duplicate_percentage = final_result.duplicate_percentage
+                job_record.total_rows_original = final_result.total_rows_original
+                job_record.total_rows_processed = final_result.total_rows_processed
+                job_record.quality_score = final_result.quality_improvement_score
+        
+        # Update job status to completed
+        job_record.status = "completed"
+        job_record.completed_at = datetime.utcnow()
+        self.db.commit()
+        
+        # Broadcast final job update and stats
+        await self._broadcast_job_update(job_record)
+        await self._broadcast_stats_update()
         
         logger.info(f"Job {job_id} workflow completed successfully")
         return {"status": "completed", "results": results}

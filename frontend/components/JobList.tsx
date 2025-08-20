@@ -156,9 +156,9 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
   const getStatusText = (status: string) => {
     switch (status) {
       case 'uploaded':
-        return 'Ready to Process';
+        return 'Uploaded';
       case 'pending':
-        return 'Pending';
+        return 'Processing Soon';
       case 'processing':
         return 'Processing';
       case 'processing_uc1':
@@ -213,19 +213,40 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
     }
   };
 
-  const handleDownloadFile = async (jobId: string, filename: string) => {
+  const handleDownloadFile = async (jobId: string, job: Job) => {
     try {
-      const response = await apiClient.get(`/jobs/${jobId}/download`, {
-        responseType: 'blob',
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      // If job has results with output_file_path, use that for download
+      if (job.results && typeof job.results === 'object' && 'output_file_path' in job.results) {
+        const outputPath = (job.results as any).output_file_path;
+        const response = await apiClient.get('/upload/download-file', {
+          params: { filepath: outputPath },
+          responseType: 'blob',
+        });
+        
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        const filename = outputPath.split('/').pop() || job.filename;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      } else {
+        // Fallback to original endpoint
+        const response = await apiClient.get(`/jobs/${jobId}/download`, {
+          responseType: 'blob',
+        });
+        
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', job.filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (error) {
       console.error('Error downloading file:', error);
     }
@@ -258,9 +279,6 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
                   Created
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
-                  Results
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
                   Actions
@@ -297,17 +315,6 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {new Date(job.created_at).toLocaleString()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {job.quality_score && (
-                    <div>Quality: {job.quality_score}%</div>
-                  )}
-                  {job.has_duplicates !== undefined && (
-                    <div>Has Duplicates: {job.has_duplicates ? 'Yes' : 'No'}</div>
-                  )}
-                  {job.is_sparse !== undefined && (
-                    <div>Is Sparse: {job.is_sparse ? 'Yes' : 'No'}</div>
-                  )}
-                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                   <button
                     onClick={() => handleViewDetails(job)}
@@ -316,18 +323,9 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                   >
                     <EyeIcon className="h-4 w-4 status-icon" />
                   </button>
-                  {job.status === 'uploaded' && (
-                    <button
-                      onClick={() => handleStartProcessing(job.id.toString())}
-                      className="text-green-600 hover:text-green-900 px-2 py-1 border border-green-300 rounded text-xs"
-                      title="Start Processing"
-                    >
-                      Start
-                    </button>
-                  )}
                   {job.status === 'completed' && (
                     <button
-                      onClick={() => handleDownloadFile(job.id.toString(), job.filename)}
+                      onClick={() => handleDownloadFile(job.id.toString(), job)}
                       className="text-green-600 hover:text-green-900"
                       title="Download Result"
                     >
@@ -338,7 +336,7 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                     onClick={() => handleDeleteJob(job.id.toString())}
                     className="text-red-600 hover:text-red-900"
                     title="Delete Job"
-                  >
+                    >
                     <TrashIcon className="h-4 w-4 status-icon" />
                   </button>
                 </td>

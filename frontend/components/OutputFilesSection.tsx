@@ -60,16 +60,19 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
     }
   };
 
-  const handleDownloadFile = async (filename: string) => {
+  const handleDownloadFile = async (file: OutputFile) => {
     try {
-      const response = await apiClient.get(`/jobs/outputs/${filename}/download`, {
+      const response = await apiClient.get('/upload/download-file', {
+        params: { 
+          filepath: file.path
+        },
         responseType: 'blob',
       });
       
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', filename);
+      link.setAttribute('download', file.filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -80,12 +83,16 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
     }
   };
 
-  const handlePreviewFile = async (filename: string) => {
+  const handlePreviewFile = async (file: OutputFile) => {
     setLoadingPreview(true);
-    setPreviewFile(filename);
+    setPreviewFile(file.filename);
     
     try {
-      const response = await apiClient.get(`/jobs/outputs/${filename}/preview`);
+      const response = await apiClient.get('/upload/preview-file', {
+        params: {
+          filepath: file.path
+        }
+      });
       setPreviewData(response.data);
     } catch (error: any) {
       console.error('Error previewing file:', error);
@@ -145,11 +152,6 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center space-x-2">
-          {isExpanded ? (
-            <ChevronDownIcon className="h-5 w-5 text-gray-500 dark:text-gray-400" />
-          ) : (
-            <ChevronRightIcon className="h-5 w-5 text-gray-500 dark:text-gray-400" />
-          )}
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 theme-transition">
             Result Files
           </h2>
@@ -159,9 +161,13 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
             </span>
           )}
         </div>
-        <p className="text-sm text-gray-600 dark:text-gray-400 theme-transition">
-          View and download processed files
-        </p>
+        <div className="flex items-center space-x-2">
+          {isExpanded ? (
+            <ChevronDownIcon className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+          ) : (
+            <ChevronRightIcon className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+          )}
+        </div>
       </div>
 
       {isExpanded && (
@@ -225,12 +231,22 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handlePreviewFile(file.filename);
+                        handlePreviewFile(file);
                       }}
                       className="bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-600 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 rounded-full p-1 transition-colors theme-transition"
                       title="Preview file"
                     >
                       <EyeIcon className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadFile(file);
+                      }}
+                      className="bg-green-100 dark:bg-green-900 hover:bg-green-200 dark:hover:bg-green-800 text-green-600 dark:text-green-300 hover:text-green-800 dark:hover:text-green-200 rounded-full p-1 transition-colors theme-transition"
+                      title="Download file"
+                    >
+                      <ArrowDownTrayIcon className="h-3 w-3" />
                     </button>
                     <span className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-xs rounded-full font-medium theme-transition">
                       ✓
@@ -266,20 +282,6 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
                         </span>
                       )}
                     </div>
-                  </div>
-
-                  {/* Download Action */}
-                  <div className="mt-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownloadFile(file.filename);
-                      }}
-                      className="w-full flex items-center justify-center px-2 py-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors theme-transition"
-                      title="Download file"
-                    >
-                      <ArrowDownTrayIcon className="h-4 w-4" />
-                    </button>
                   </div>
                 </div>
               ))}

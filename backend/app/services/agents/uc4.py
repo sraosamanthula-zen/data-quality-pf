@@ -3,7 +3,12 @@ UC4: Duplicate Records Detection and Removal Agent
 
 This module contains the complete UC4 agent that:
 1. Takes an input CSV file as dataset and optional reference file
-2. Detects and removes exact duplicates using DuckDB
+2. Detects and rem            # Use same filename as input
+            original_filename = input_path.name
+
+            # Output to the outputs directory
+            from app.core.config import settings
+            output_path = settings.outputs_dir / original_filenameact duplicates using DuckDB
 3. Outputs a new CSV file with '_processed' suffix containing the deduplicated data
 4. Returns results in Pydantic model format
 """
@@ -18,8 +23,6 @@ from typing import Dict, Optional
 # Third-party imports
 from agno.agent import Agent
 from agno.tools.duckdb import DuckDbTools
-from agno.tools.file import FileTools
-from agno.tools.reasoning import ReasoningTools
 from pydantic import BaseModel, Field
 
 # Local application imports
@@ -102,7 +105,7 @@ class UC4Agent:
         self.agent = Agent(
             name="UC4 Duplicate Detection and Removal Agent",
             model=self.config.get_azure_openai_model(temperature=settings.agent_temperature),
-            tools=[FileTools(), DuckDbTools(), ReasoningTools()],
+            tools=[DuckDbTools(inspect_queries=True, export_tables=True)],
             instructions=[
                 "You are a DATA DEDUPLICATION EXPERT using DuckDB for efficient data processing.",
                 "",
@@ -135,6 +138,7 @@ class UC4Agent:
             ],
             show_tool_calls=True,
             markdown=True,
+            reasoning=True,
         )
 
     async def detect_and_remove_duplicates(
@@ -174,57 +178,40 @@ class UC4Agent:
 
             # Generate output filename with original name preserved
             input_path = Path(input_file_path)
-            original_stem = input_path.stem
-            if unique_filename:
-                # Extract original filename from unique filename if it contains timestamp prefix
-                if unique_filename.startswith(('UC1_', 'UC4_')):
-                    # Remove UC prefix and timestamp to get original name
-                    parts = unique_filename.split('_', 3)
-                    if len(parts) >= 4:
-                        original_stem = parts[3].replace('.csv', '')
-                    else:
-                        original_stem = unique_filename.replace('.csv', '')
-                else:
-                    original_stem = unique_filename.replace('.csv', '')
             
-            # Format: original_name_job_X_uc4_processed.csv
-            job_short_id = job_id[:8]  # Use first 8 characters of UUID
-            output_filename = f"{original_stem}_job_{job_short_id}_uc4_processed.csv"
+            # Use same filename as input
+            original_filename = input_path.name
 
-            output_path = input_path.parent / output_filename
+            # Output to the outputs directory
+            from app.core.config import settings
+            output_path = settings.outputs_dir / original_filename
 
             # Prepare analysis instructions
             analysis_prompt = f"""
-            Analyze and remove duplicates from the CSV file at '{input_file_path}'.
+            You are a data quality agent for UC4 (Duplicate Detection and Resolution).
+            Analyze the CSV file at '{input_file_path}' for duplicate records and data quality issues.
             
-            DEDUPLICATION REQUIREMENTS:
-            1. Load the CSV into DuckDB
-            2. Identify exact duplicate rows (identical across all columns)
-            3. Remove all duplicates, keeping only the first occurrence of each unique record
-            4. Calculate comprehensive duplicate statistics
-            5. Export the deduplicated dataset to '{output_path}'
+            REQUIRED TASKS:
+            1. Load the CSV file into DuckDB
+            2. Identify duplicate records using multiple detection methods
+            3. Calculate duplicate statistics and metrics
+            4. Add duplicate indicator columns
+            5. Export the enhanced dataset to '{output_path}'
             
-            DUPLICATE DETECTION STRATEGY:
-            - Use SQL with ROW_NUMBER() OVER (PARTITION BY all_columns ORDER BY rowid) to identify duplicates
-            - Keep rows where ROW_NUMBER = 1 (first occurrence)
-            - Calculate before/after statistics
+            DUPLICATE DETECTION:
+            - Exact duplicates: Rows with identical values across all columns
+            - Partial duplicates: Rows with matching key fields but different values
+            - Similar records: Rows with high similarity scores
+            - Calculate duplicate percentages and counts
             
-            ANALYSIS REQUIREMENTS:
-            - Count total rows before and after
-            - Identify duplicate patterns and most frequent duplicates
-            - Calculate data reduction percentage
-            - Provide quality improvement metrics
+            REQUIRED OUTPUT COLUMNS (add to original data):
+            - is_duplicate: BOOLEAN - true if row is a duplicate
+            - duplicate_group_id: INTEGER - group ID for related duplicates
+            - duplicate_count: INTEGER - number of duplicates in the group
+            - similarity_score: FLOAT - similarity score (0-100)
+            - duplicate_type: VARCHAR - 'EXACT', 'PARTIAL', 'SIMILAR', 'UNIQUE'
             
-            OUTPUT FORMAT:
-            - Export only unique rows (deduplicated data) to the specified output path
-            - Preserve all original columns and data types
-            - Maintain original column order
-            
-            Provide detailed analysis results including:
-            - Total duplicate rows removed
-            - Percentage of duplicates in original data
-            - Data quality improvement metrics
-            - Recommendations for preventing future duplicates
+            Use DuckDB to process and export the data. Ensure all original columns are preserved.
             """
 
             # Add reference file context if provided
@@ -247,29 +234,76 @@ class UC4Agent:
             if not output_path.exists():
                 raise Exception("Output file was not created by the agent")
 
-            # TODO: Parse the agent response to extract actual metrics
-            # For now, return a basic result structure
+            # Parse the input and output files to extract actual metrics
+            try:
+                import pandas as pd
+                
+                # Read original file for baseline metrics
+                df_original = pd.read_csv(input_file_path)
+                total_rows_original = len(df_original)
+                total_columns = len(df_original.columns)
+                
+                # Read processed file for comparison
+                df_processed = pd.read_csv(output_path)
+                total_rows_processed = len(df_processed)
+                
+                # Calculate duplicate metrics
+                duplicate_rows_removed = total_rows_original - total_rows_processed
+                duplicate_percentage = (duplicate_rows_removed / total_rows_original * 100) if total_rows_original > 0 else 0.0
+                data_reduction_percentage = duplicate_percentage
+                
+                # Calculate uniqueness and quality scores
+                uniqueness_score = (total_rows_processed / total_rows_original * 100) if total_rows_original > 0 else 100.0
+                quality_improvement_score = duplicate_percentage  # Higher is better for UC4
+                
+                # Generate recommendations
+                recommendations = []
+                if duplicate_percentage > 20:
+                    recommendations.append("High duplicate rate detected - consider improving data collection processes")
+                elif duplicate_percentage > 10:
+                    recommendations.append("Moderate duplicate rate - implement duplicate prevention measures")
+                elif duplicate_percentage > 0:
+                    recommendations.append("Low duplicate rate detected - data quality is good")
+                else:
+                    recommendations.append("No duplicates found - excellent data quality")
+                
+                if data_reduction_percentage > 0:
+                    recommendations.append(f"File size reduced by {data_reduction_percentage:.1f}% after deduplication")
+                
+            except Exception as parse_error:
+                print(f"Could not parse output CSV metrics: {parse_error}")
+                # Fallback to basic file analysis
+                total_rows_original = 0
+                total_rows_processed = 0
+                total_columns = 0
+                duplicate_rows_removed = 0
+                duplicate_percentage = 0.0
+                data_reduction_percentage = 0.0
+                quality_improvement_score = 0.0
+                uniqueness_score = 100.0
+                recommendations = ["Analysis completed - review output file for detailed results"]
+
             result = UC4AnalysisResult(
                 job_id=job_id,
                 input_file_path=str(input_file_path),
                 output_file_path=str(output_path),
                 reference_file_path=reference_file_path,
                 analysis_timestamp=start_time,
-                total_rows_original=0,  # Would be parsed from agent response
-                total_rows_processed=0,  # Would be parsed from agent response
-                total_columns=0,  # Would be parsed from agent response
-                duplicate_rows_removed=0,  # Would be parsed from agent response
-                duplicate_percentage=0.0,  # Would be parsed from agent response
-                exact_duplicates_found=0,  # Would be parsed from agent response
-                duplicate_patterns={},  # Would be parsed from agent response
-                most_duplicated_records=[],  # Would be parsed from agent response
-                data_reduction_percentage=0.0,  # Would be parsed from agent response
-                quality_improvement_score=0.0,  # Would be parsed from agent response
-                uniqueness_score=0.0,  # Would be parsed from agent response
+                total_rows_original=total_rows_original,
+                total_rows_processed=total_rows_processed,
+                total_columns=total_columns,
+                duplicate_rows_removed=duplicate_rows_removed,
+                duplicate_percentage=duplicate_percentage,
+                exact_duplicates_found=duplicate_rows_removed,
+                duplicate_patterns={},  # Could be enhanced with pattern analysis
+                most_duplicated_records=[],  # Could be enhanced with specific record analysis
+                data_reduction_percentage=data_reduction_percentage,
+                quality_improvement_score=quality_improvement_score,
+                uniqueness_score=uniqueness_score,
                 processing_time_seconds=processing_time,
                 success=True,
                 error_message=None,
-                recommendations=[],  # Would be parsed from agent response
+                recommendations=recommendations,
             )
 
             log_agent_activity(

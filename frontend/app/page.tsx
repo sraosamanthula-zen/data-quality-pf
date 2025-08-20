@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Header from '@/components/Header';
 import Dashboard from '@/components/Dashboard';
 import FileUpload from '@/components/FileUpload';
@@ -19,51 +19,56 @@ export default function Home() {
     pending_jobs: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [lastUpdate, setLastUpdate] = useState<string>('');
 
-  const fetchJobs = async () => {
+  // API calls for data fetching
+  const fetchJobs = useCallback(async () => {
     try {
       const response = await apiClient.get('/jobs');
       setJobs(response.data);
+      setLoading(false);
+      setLastUpdate(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchJobStats = async () => {
+  const fetchJobStats = useCallback(async () => {
     try {
       const response = await apiClient.get('/statistics');
       setJobStats(response.data);
+      setLastUpdate(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Error fetching job stats:', error);
     }
-  };
+  }, []);
 
+  // Load initial data
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
       await Promise.all([fetchJobs(), fetchJobStats()]);
-      setLastUpdated(new Date().toLocaleTimeString());
       setLoading(false);
     };
-
     loadData();
+  }, [fetchJobs, fetchJobStats]);
 
-    // Set up polling for real-time updates
+  // Set up polling for regular updates
+  useEffect(() => {
     const interval = setInterval(() => {
       fetchJobs();
       fetchJobStats();
-      setLastUpdated(new Date().toLocaleTimeString());
     }, 5000); // Poll every 5 seconds
-
+    
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchJobs, fetchJobStats]);
 
-  const handleJobUpdate = () => {
+  const handleJobUpdate = useCallback(() => {
+    // Trigger immediate refresh
     fetchJobs();
     fetchJobStats();
-    setLastUpdated(new Date().toLocaleTimeString());
-  };
+  }, [fetchJobs, fetchJobStats]);
 
   if (loading) {
     return (
@@ -79,7 +84,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 theme-transition">
       {/* Header */}
-      <Header lastUpdated={lastUpdated} />
+      <Header lastUpdated={lastUpdate} />
 
       {/* Main Content */}
       <main className="w-full px-4 sm:px-6 lg:px-8 py-6">
