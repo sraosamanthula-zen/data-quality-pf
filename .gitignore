@@ -137,7 +137,7 @@ poetry.lock
 
 # Data files (if large)
 *.csv
-*.json
+# *.json
 *.xlsx
 *.xls
 
