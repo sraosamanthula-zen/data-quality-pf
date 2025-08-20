@@ -86,6 +86,7 @@ class BatchStatusResponse(BaseModel):
 
 class JobStatus(BaseModel):
     """Legacy model for backward compatibility"""
+
     job_id: int
     status: str
     message: Optional[str] = None

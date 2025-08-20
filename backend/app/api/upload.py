@@ -12,11 +12,12 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from typing import Optional
 
 # Local application imports
-from agents.base_config import log_agent_activity
-from database import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
-from models import UploadResponse
+from app.services.agents.base_config import log_agent_activity
+from app.db import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
+from app.schemas import UploadResponse
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -27,6 +28,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 REFERENCE_DIR = Path(os.getenv("REFERENCE_FILES_DIRECTORY", "./reference_files"))
 REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
 
+
 class DirectoryRequest(BaseModel):
     directory_path: str
 
@@ -36,54 +38,61 @@ async def upload_file(
     file: UploadFile = File(...),
     selected_ucs: str = "UC1,UC4",  # Comma-separated list of UCs
     is_reference: str = "false",  # Whether this is a reference file
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Upload a file and create a job for data quality analysis
-    
+
     Args:
         file: File to analyze (supports CSV, XLSX, XLS, TSV, JSON, Parquet)
         selected_ucs: Comma-separated list of UCs to run ("UC1", "UC4", or "UC1,UC4")
         is_reference: Whether this file is a reference file ("true" or "false")
-        
+
     Returns:
         Job information (processing starts separately)
     """
-    
+
     # Supported file extensions
-    supported_extensions = ['.csv', '.xlsx', '.xls', '.tsv', '.json', '.parquet']
-    
+    supported_extensions = [".csv", ".xlsx", ".xls", ".tsv", ".json", ".parquet"]
+
+    # Validate filename exists
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
     # Validate file type
     file_extension = Path(file.filename).suffix.lower()
     if file_extension not in supported_extensions:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file type: {file_extension}. Supported types: {', '.join(supported_extensions)}"
+            status_code=400,
+            detail=f"Unsupported file type: {file_extension}. Supported types: {', '.join(supported_extensions)}",
         )
-    
+
     # Parse and validate selected UCs
     uc_list = [uc.strip() for uc in selected_ucs.split(",")]
     valid_ucs = ["UC1", "UC4"]
     invalid_ucs = [uc for uc in uc_list if uc not in valid_ucs]
-    
+
     if invalid_ucs:
-        raise HTTPException(status_code=400, detail=f"Invalid UCs: {invalid_ucs}. Valid options: {valid_ucs}")
-    
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid UCs: {invalid_ucs}. Valid options: {valid_ucs}",
+        )
+
     if not uc_list:
         raise HTTPException(status_code=400, detail="At least one UC must be selected")
-    
+
     # Parse is_reference flag
     is_ref = is_reference.lower() == "true"
-    
+
     try:
         # Save uploaded file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_filename = f"{timestamp}_{file.filename}"
         file_path = UPLOAD_DIR / safe_filename
-        
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
         # Create job record
         job = JobRecord(
             filename=file.filename,
@@ -91,125 +100,130 @@ async def upload_file(
             job_type=",".join(uc_list),  # Store all selected UCs
             selected_ucs=selected_ucs,
             is_reference=is_ref,
-            status="uploaded"  # New status: uploaded but not yet processing
+            status="uploaded",  # New status: uploaded but not yet processing
         )
         db.add(job)
         db.commit()
         db.refresh(job)
-        
+
         # Record file metrics
         file_size = file_path.stat().st_size
-        metrics = FileProcessingMetrics(
-            job_id=job.id,
-            file_size_bytes=file_size
-        )
+        metrics = FileProcessingMetrics(job_id=job.id, file_size_bytes=file_size)
         db.add(metrics)
         db.commit()
-        
-        log_agent_activity("FileUpload", "File uploaded successfully", 
-                         {
-                             "job_id": job.id, 
-                             "filename": file.filename, 
-                             "file_extension": file_extension,
-                             "file_size": file_size, 
-                             "selected_ucs": uc_list,
-                             "is_reference": is_ref
-                         })
-        
+
+        log_agent_activity(
+            "FileUpload",
+            "File uploaded successfully",
+            {
+                "job_id": job.id,
+                "filename": file.filename,
+                "file_extension": file_extension,
+                "file_size": file_size,
+                "selected_ucs": uc_list,
+                "is_reference": is_ref,
+            },
+        )
+
         return UploadResponse(
             job_id=job.id,
             message=f"File uploaded successfully. Ready to process with: {', '.join(uc_list)}",
             filename=file.filename,
-            job_type=",".join(uc_list)
+            job_type=",".join(uc_list),
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-        
-        
+
+
 @router.get("/preview-file")
-async def preview_file(filename: str, directory: str = None):
+async def preview_file(filename: str, directory: Optional[str] = None):
     """Get a preview of a file with first few rows (supports CSV, TSV mainly)"""
     if directory:
         data_directory = directory
     else:
-        data_directory = os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
-    
+        data_directory = os.getenv("INPUT_DIRECTORY", "./input_data")
+
     file_path = os.path.join(data_directory, filename)
-    
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-    
+
     file_extension = Path(filename).suffix.lower()
-    
+
     # Only support preview for CSV and TSV files
-    if file_extension not in ['.csv', '.tsv']:
-        raise HTTPException(status_code=400, detail=f"Preview not supported for {file_extension} files. Only CSV and TSV files can be previewed.")
-    
+    if file_extension not in [".csv", ".tsv"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Preview not supported for {file_extension} files. Only CSV and TSV files can be previewed.",
+        )
+
     try:
         import csv
-        
+
         headers = []
         rows = []
         total_rows = 0
-        
+
         # Determine delimiter based on file extension
-        delimiter = '\t' if file_extension == '.tsv' else ','
-        
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as csvfile:
+        delimiter = "\t" if file_extension == ".tsv" else ","
+
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as csvfile:
             # Read file to count total rows
             total_rows = sum(1 for line in csvfile) - 1  # Subtract 1 for header
-            
+
             # Reset file pointer
             csvfile.seek(0)
-            
+
             # Read with CSV reader
             csv_reader = csv.reader(csvfile, delimiter=delimiter)
-            
+
             # Get headers
             headers = next(csv_reader, [])
-            
+
             # Get first 100 data rows
             for i, row in enumerate(csv_reader):
                 if i >= 100:  # Limit to first 100 rows
                     break
-                    
+
                 # Ensure row has same length as headers
                 while len(row) < len(headers):
-                    row.append('')
-                    
-                rows.append(row[:len(headers)])  # Trim if longer than headers
-        
+                    row.append("")
+
+                rows.append(row[: len(headers)])  # Trim if longer than headers
+
         return {
             "filename": filename,
             "file_extension": file_extension,
             "delimiter": delimiter,
             "headers": headers,
             "rows": rows,
-            "totalRows": total_rows
+            "totalRows": total_rows,
         }
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
 
-@router.get("/directory-files")
-async def get_directory_files(directory: str = None):
+@router.get("/files")
+async def get_directory_files(directory: Optional[str] = None):
     """Get list of all supported files in the specified or configured input directory with their processing status"""
     if directory:
         data_directory = directory
     else:
-        data_directory = os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
-    
+        data_directory = os.getenv("INPUT_DIRECTORY", "./input_data")
+
     result_suffix = os.getenv("RESULT_SUFFIX", "_processed")
-    output_directory = os.getenv("OUTPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/output_data")
-    
+    output_directory = os.getenv("OUTPUT_DIRECTORY", "./output_data")
+
     # Supported file extensions (flexible for different file types)
-    supported_extensions = ['.csv', '.xlsx', '.xls', '.tsv', '.json', '.parquet']
-    
+    supported_extensions = [".csv", ".xlsx", ".xls", ".tsv", ".json", ".parquet"]
+
     if not os.path.exists(data_directory):
-        raise HTTPException(status_code=404, detail=f"Input directory not found: {data_directory}")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Input directory not found: {data_directory}"
+        )
+
     files = []
     for file in os.listdir(data_directory):
         # Check if file has supported extension
@@ -217,33 +231,39 @@ async def get_directory_files(directory: str = None):
             file_path = os.path.join(data_directory, file)
             try:
                 file_stat = os.stat(file_path)
-                
+
                 # Check if this file has been processed (look in output directory)
                 base_name = Path(file).stem
                 processed_file = f"{base_name}{result_suffix}.csv"
-                processed = os.path.exists(os.path.join(output_directory, processed_file))
-                
+                processed = os.path.exists(
+                    os.path.join(output_directory, processed_file)
+                )
+
                 # Skip already processed files from the list (if they exist in input directory)
-                if not file.endswith(f'{result_suffix}.csv'):
-                    files.append({
-                        "name": file,
-                        "extension": Path(file).suffix.lower(),
-                        "processed": processed,
-                        "size": file_stat.st_size,
-                        "lastModified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
-                        "processedFile": processed_file if processed else None
-                    })
+                if not file.endswith(f"{result_suffix}.csv"):
+                    files.append(
+                        {
+                            "name": file,
+                            "extension": Path(file).suffix.lower(),
+                            "processed": processed,
+                            "size": file_stat.st_size,
+                            "lastModified": datetime.fromtimestamp(
+                                file_stat.st_mtime
+                            ).isoformat(),
+                            "processedFile": processed_file if processed else None,
+                        }
+                    )
             except OSError:
                 # Skip files that can't be accessed
                 continue
-    
+
     return {
         "files": files,
         "input_directory": data_directory,
         "output_directory": output_directory,
         "total_files": len(files),
         "supported_extensions": supported_extensions,
-        "default_input_directory": os.getenv("INPUT_DIRECTORY", "/home/sraosamanthula/ZENLABS/RCL_Files/input_data")
+        "default_input_directory": os.getenv("INPUT_DIRECTORY", "./input_data"),
     }
 
 
@@ -251,33 +271,39 @@ async def get_directory_files(directory: str = None):
 async def set_directory(request: DirectoryRequest):
     """Set and validate a new directory for file processing"""
     directory_path = request.directory_path
-    
+
     if not os.path.exists(directory_path):
-        raise HTTPException(status_code=404, detail=f"Directory not found: {directory_path}")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Directory not found: {directory_path}"
+        )
+
     if not os.path.isdir(directory_path):
-        raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory_path}")
-    
+        raise HTTPException(
+            status_code=400, detail=f"Path is not a directory: {directory_path}"
+        )
+
     # Check if directory has CSV files
-    csv_files = [f for f in os.listdir(directory_path) if f.endswith('.csv')]
-    
+    csv_files = [f for f in os.listdir(directory_path) if f.endswith(".csv")]
+
     return {
         "message": "Directory validated successfully",
         "directory": directory_path,
         "csv_files_count": len(csv_files),
-        "has_csv_files": len(csv_files) > 0
+        "has_csv_files": len(csv_files) > 0,
     }
 
 
 @router.get("/reference-files")
-async def get_reference_files(uc_type: str = None, db: Session = Depends(get_db)):
+async def get_reference_files(
+    uc_type: Optional[str] = None, db: Session = Depends(get_db)
+):
     """Get all reference files, optionally filtered by UC type"""
     query = db.query(ReferenceFile).filter(ReferenceFile.is_active)
     if uc_type:
         query = query.filter(ReferenceFile.uc_type == uc_type)
-    
+
     reference_files = query.order_by(ReferenceFile.created_at.desc()).all()
-    
+
     return {
         "reference_files": [
             {
@@ -285,7 +311,7 @@ async def get_reference_files(uc_type: str = None, db: Session = Depends(get_db)
                 "uc_type": rf.uc_type,
                 "filename": rf.filename,
                 "description": rf.description,
-                "created_at": rf.created_at.isoformat()
+                "created_at": rf.created_at.isoformat(),
             }
             for rf in reference_files
         ]
@@ -297,106 +323,125 @@ async def upload_reference_file(
     file: UploadFile = File(...),
     uc_type: str = Form("UC1"),
     description: str = Form("Reference file"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Upload a reference file for a specific UC"""
-    
+
     # Validate UC type
     if uc_type not in ["UC1", "UC4"]:
         raise HTTPException(status_code=400, detail="UC type must be UC1 or UC4")
-    
+
+    # Validate filename exists
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
     # Validate file type
-    if not file.filename.endswith('.csv'):
+    if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
-    
+
     try:
         # Save reference file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_filename = f"{uc_type}_{timestamp}_{file.filename}"
         file_path = REFERENCE_DIR / safe_filename
-        
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
         # Deactivate previous reference files for this UC type
         db.query(ReferenceFile).filter(
-            ReferenceFile.uc_type == uc_type,
-            ReferenceFile.is_active
+            ReferenceFile.uc_type == uc_type, ReferenceFile.is_active
         ).update({"is_active": False})
-        
+
         # Create new reference file record
         ref_file = ReferenceFile(
             uc_type=uc_type,
             filename=file.filename,
             file_path=str(file_path),
             description=description,
-            is_active=True
+            is_active=True,
         )
         db.add(ref_file)
         db.commit()
         db.refresh(ref_file)
-        
-        log_agent_activity("ReferenceFileUpload", f"Reference file uploaded for {uc_type}", 
-                         {"uc_type": uc_type, "filename": file.filename, "ref_file_id": ref_file.id})
-        
+
+        log_agent_activity(
+            "ReferenceFileUpload",
+            f"Reference file uploaded for {uc_type}",
+            {"uc_type": uc_type, "filename": file.filename, "ref_file_id": ref_file.id},
+        )
+
         return {
             "id": ref_file.id,
             "message": f"Reference file uploaded successfully for {uc_type}",
             "filename": file.filename,
-            "uc_type": uc_type
+            "uc_type": uc_type,
         }
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Reference file upload failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Reference file upload failed: {str(e)}"
+        )
 
 
 @router.delete("/reference-file/{uc_type}")
 async def remove_reference_file(uc_type: str, db: Session = Depends(get_db)):
     """Remove/deactivate reference file for a specific UC type"""
-    
+
     # Validate UC type
     if uc_type not in ["UC1", "UC4"]:
         raise HTTPException(status_code=400, detail="UC type must be UC1 or UC4")
-    
+
     try:
         # Deactivate all reference files for this UC type
-        updated_count = db.query(ReferenceFile).filter(
-            ReferenceFile.uc_type == uc_type,
-            ReferenceFile.is_active
-        ).update({"is_active": False})
-        
+        updated_count = (
+            db.query(ReferenceFile)
+            .filter(ReferenceFile.uc_type == uc_type, ReferenceFile.is_active)
+            .update({"is_active": False})
+        )
+
         db.commit()
-        
+
         if updated_count == 0:
-            raise HTTPException(status_code=404, detail=f"No active reference file found for {uc_type}")
-        
-        log_agent_activity("ReferenceFileRemoval", f"Reference file removed for {uc_type}", 
-                         {"uc_type": uc_type, "removed_count": updated_count})
-        
+            raise HTTPException(
+                status_code=404, detail=f"No active reference file found for {uc_type}"
+            )
+
+        log_agent_activity(
+            "ReferenceFileRemoval",
+            f"Reference file removed for {uc_type}",
+            {"uc_type": uc_type, "removed_count": updated_count},
+        )
+
         return {
             "message": f"Reference file removed successfully for {uc_type}",
             "uc_type": uc_type,
-            "removed_count": updated_count
+            "removed_count": updated_count,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to remove reference file: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to remove reference file: {str(e)}"
+        )
 
 
 @router.get("/reference-file/{uc_type}/history")
 async def get_reference_file_history(uc_type: str, db: Session = Depends(get_db)):
     """Get upload history for reference files of a specific UC type"""
-    
+
     # Validate UC type
     if uc_type not in ["UC1", "UC4"]:
         raise HTTPException(status_code=400, detail="UC type must be UC1 or UC4")
-    
-    reference_files = db.query(ReferenceFile).filter(
-        ReferenceFile.uc_type == uc_type
-    ).order_by(ReferenceFile.created_at.desc()).all()
-    
+
+    reference_files = (
+        db.query(ReferenceFile)
+        .filter(ReferenceFile.uc_type == uc_type)
+        .order_by(ReferenceFile.created_at.desc())
+        .all()
+    )
+
     return {
         "uc_type": uc_type,
         "history": [
@@ -406,10 +451,10 @@ async def get_reference_file_history(uc_type: str, db: Session = Depends(get_db)
                 "description": rf.description,
                 "is_active": rf.is_active,
                 "created_at": rf.created_at.isoformat(),
-                "file_path": rf.file_path
+                "file_path": rf.file_path,
             }
             for rf in reference_files
         ],
         "total_uploads": len(reference_files),
-        "active_count": len([rf for rf in reference_files if rf.is_active])
+        "active_count": len([rf for rf in reference_files if rf.is_active]),
     }

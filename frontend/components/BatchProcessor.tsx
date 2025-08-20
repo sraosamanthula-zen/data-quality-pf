@@ -83,7 +83,7 @@ export default function BatchProcessor({ onJobUpdate }: BatchProcessorProps) {
               with the "_processed" suffix in the same directory.
             </p>
             <p className="text-xs text-blue-600 mt-2">
-              Directory: <code className="bg-blue-100 px-1 rounded">/home/sraosamanthula/ZENLABS/RCL_Files</code>
+              Directory: <code className="bg-blue-100 px-1 rounded">.</code>
             </p>
           </div>
         </div>
