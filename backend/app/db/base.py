@@ -3,9 +3,10 @@ Database configuration and session management
 """
 
 from contextlib import contextmanager
+from typing import Any, Generator
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from typing import Generator
+from sqlalchemy.orm import Session, sessionmaker
 
 from ..core.config import settings
 from .models import Base
@@ -52,9 +53,9 @@ def get_db() -> Generator[Session, None, None]:
 
 
 @contextmanager
-def get_db_session():
+def get_db_session() -> Generator[Session, Any, None]:
     """Context manager for database session"""
-    db = SessionLocal()
+    db: Session = SessionLocal()
     try:
         yield db
         db.commit()

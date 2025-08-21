@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 # Local application imports
 from .base_config import AgentConfig, log_agent_activity
+from ..new_agents import uc4_agent
 
 
 class UC4AnalysisResult(BaseModel):
@@ -111,6 +112,17 @@ class UC4Agent:
                 "",
                 "Your primary task is to detect and remove exact duplicate rows from CSV files.",
                 "",
+                "DATA WORKFLOW STRUCTURE:",
+                "- INPUT FILES: Located in inputs/job_X/ subdirectories (read from these locations)",
+                "- TEMP FILES: Write intermediate results to temp/job_X/uc_UC4/ subdirectories",
+                "- OUTPUT FILES: Final results will be copied to outputs/job_X/ by the system",
+                "",
+                "FOLDER PROCESSING RULES:",
+                "- ALWAYS read input CSV from the exact path provided in the prompt",
+                "- ALWAYS write output CSV to the exact temp folder path provided in the prompt", 
+                "- DO NOT write directly to any outputs/ folder - use temp/ folder only",
+                "- The system will handle final copying from temp to outputs",
+                "",
                 "IMPORTANT CONSTRAINTS:",
                 f"- NEVER load more than {settings.max_prompt_rows} rows of raw data into your prompt/context",
                 "- Always use DuckDB aggregations and summaries for analysis",
@@ -131,7 +143,7 @@ class UC4Agent:
                 "- Get stats: SELECT COUNT(*) as total, COUNT(DISTINCT *) as unique FROM data",
                 "",
                 "OUTPUT REQUIREMENTS:",
-                "- Save cleaned data to new CSV file",
+                "- Save cleaned data to new CSV file in specified temp folder",
                 "- Report duplicate statistics",
                 "- Provide quality improvement metrics",
                 "- Include processing recommendations",
@@ -139,11 +151,13 @@ class UC4Agent:
             show_tool_calls=True,
             markdown=True,
             reasoning=True,
+            debug_mode=True,
         )
 
     async def detect_and_remove_duplicates(
         self,
         input_file_path: str,
+        temp_folder: Path,
         reference_file_path: Optional[str] = None,
         unique_filename: Optional[str] = None,
     ) -> UC4AnalysisResult:
@@ -151,7 +165,8 @@ class UC4Agent:
         Detect and remove duplicates from a CSV file using DuckDB
 
         Args:
-            input_file_path: Path to the CSV file to process
+            input_file_path: Path to the CSV file to process (should be in inputs folder)
+            temp_folder: Path to temp folder where outputs should be written
             reference_file_path: Optional reference file for comparison
             unique_filename: Optional unique filename for output file
 
@@ -169,6 +184,7 @@ class UC4Agent:
                     "job_id": job_id,
                     "input_file": input_file_path,
                     "reference_file": reference_file_path,
+                    "temp_folder": str(temp_folder),
                 },
             )
 
@@ -176,27 +192,36 @@ class UC4Agent:
             if not os.path.exists(input_file_path):
                 raise FileNotFoundError(f"Input file not found: {input_file_path}")
 
-            # Generate output filename with original name preserved
-            input_path = Path(input_file_path)
-            
-            # Use same filename as input
-            original_filename = input_path.name
+            # Ensure temp folder exists
+            temp_folder.mkdir(parents=True, exist_ok=True)
 
-            # Output to the outputs directory
-            from app.core.config import settings
-            output_path = settings.outputs_dir / original_filename
+            # Generate output filename - write to temp folder, not outputs
+            input_path = Path(input_file_path)
+            if unique_filename:
+                output_filename = f"{unique_filename}.csv"
+            else:
+                # Use original filename with UC4 suffix
+                output_filename = f"uc4_processed_{input_path.stem}.csv"
+            
+            # Output to the temp directory (NOT outputs directory)
+            output_path = temp_folder / output_filename
+            output_path.mkdir(parents=True, exist_ok=True)
 
             # Prepare analysis instructions
             analysis_prompt = f"""
             You are a data quality agent for UC4 (Duplicate Detection and Resolution).
             Analyze the CSV file at '{input_file_path}' for duplicate records and data quality issues.
             
+            IMPORTANT: Read from the inputs folder, write to the temp folder.
+            INPUT: '{input_path.parent}' (from inputs directory)
+            OUTPUT: '{output_path.parent}' (to temp directory for intermediate processing)
+            
             REQUIRED TASKS:
-            1. Load the CSV file into DuckDB
+            1. Load the CSV file into DuckDB from: '{input_file_path}'
             2. Identify duplicate records using multiple detection methods
             3. Calculate duplicate statistics and metrics
             4. Add duplicate indicator columns
-            5. Export the enhanced dataset to '{output_path}'
+            5. Export the enhanced dataset to: '{output_path}'
             
             DUPLICATE DETECTION:
             - Exact duplicates: Rows with identical values across all columns
@@ -366,13 +391,19 @@ def get_uc4_agent() -> UC4Agent:
 
 
 async def run_uc4_analysis(
-    file_path: str, reference_file_path: Optional[str] = None, unique_filename: Optional[str] = None
+    file_path: str, 
+    temp_folder: Path,
+    reference_file_path: Optional[str] = None, 
+    unique_filename: Optional[str] = None,
+    input_file_: Path = None,
+    output_dir_: Path = None,
 ) -> UC4AnalysisResult:
     """
     Run UC4 duplicate detection analysis
 
     Args:
-        file_path: Path to file to analyze
+        file_path: Path to file to analyze (in inputs folder)
+        temp_folder: Path to temp folder for intermediate outputs
         reference_file_path: Optional reference file for comparison
         unique_filename: Optional unique filename to use for output file
 
@@ -381,9 +412,13 @@ async def run_uc4_analysis(
     """
     agent = get_uc4_agent()
 
+    await uc4_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+
+
     # Use file_path as the primary input for UC4
     return await agent.detect_and_remove_duplicates(
         input_file_path=file_path,
+        temp_folder=temp_folder,
         reference_file_path=reference_file_path,
         unique_filename=unique_filename,
     )

@@ -19,10 +19,10 @@ from typing import Optional
 from app.core.config import settings
 from app.services.agents.base_config import log_agent_activity
 from app.db import get_db, JobRecord, FileProcessingMetrics, ReferenceFile
+from app.schemas import UploadResponse
 
 # Setup logging
 logger = logging.getLogger(__name__)
-from app.schemas import UploadResponse
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 

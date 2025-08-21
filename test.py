@@ -25,7 +25,7 @@ columns = [f'Column{i+1}' for i in range(num_columns)]
 df = pd.DataFrame(duplicated_data, columns=columns)
 
 # Save DataFrame to CSV
-df.to_csv('data/inputs/test/example_dataset_1.csv', index=False)
+df.to_csv('data/inputs/test/example_dataset_2.csv', index=False)
 
 # Output the head of the dataframe just to verify
 print(df.head())

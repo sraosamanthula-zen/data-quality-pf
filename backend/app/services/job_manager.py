@@ -175,9 +175,10 @@ class JobProcessor:
         # Create unique filename for this processing
         unique_filename = f"uc1_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Run UC1 analysis
+        # Run UC1 analysis with temp folder
         result = await run_uc1_analysis(
             file_path=str(csv_file),
+            temp_folder=temp_folder,
             reference_file_path=str(reference_file) if reference_file else None,
             unique_filename=unique_filename
         )
@@ -203,9 +204,10 @@ class JobProcessor:
         # Create unique filename for this processing
         unique_filename = f"uc4_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Run UC4 analysis
+        # Run UC4 analysis with temp folder
         result = await run_uc4_analysis(
             file_path=str(csv_file),
+            temp_folder=temp_folder,
             unique_filename=unique_filename
         )
         
@@ -221,9 +223,11 @@ class JobProcessor:
     async def execute_job_workflow(self, job_id: int, selected_use_cases: List[str]) -> Dict:
         """
         Execute the complete job workflow:
-        1. Get job record and file path
-        2. Process file with selected use cases directly
-        3. Store results in database
+        1. Setup job folder structure (inputs/job_X, temp/job_X, outputs/job_X)
+        2. Copy input file to job inputs folder
+        3. Process file with selected use cases in temp folder
+        4. Copy final result to outputs folder
+        5. Store results in database
         """
         logger.info(f"Starting job workflow for job {job_id} with use cases: {selected_use_cases}")
         
@@ -232,10 +236,18 @@ class JobProcessor:
         if not job_record:
             raise ValueError(f"Job {job_id} not found")
         
-        # Check if file exists
-        file_path = Path(job_record.file_path)
-        if not file_path.exists():
-            raise FileNotFoundError(f"Input file not found: {file_path}")
+        # Check if original file exists
+        original_file_path = Path(job_record.file_path)
+        if not original_file_path.exists():
+            raise FileNotFoundError(f"Input file not found: {original_file_path}")
+        
+        # Setup job folder structure
+        job_structure = self.setup_job_folders(job_id)
+        
+        # Copy input file to job inputs folder
+        job_input_file = job_structure.inputs_folder / original_file_path.name
+        shutil.copy2(original_file_path, job_input_file)
+        logger.info(f"Copied input file to job inputs: {job_input_file}")
         
         # Update job status to processing
         job_record.status = "processing"
@@ -250,9 +262,13 @@ class JobProcessor:
         # Process each use case
         results = {}
         final_result = None
-        
+        current_input_file = job_input_file  # Start with the input file in job inputs folder
+        input_folder_ = current_input_file.parent
         for use_case in selected_use_cases:
             logger.info(f"Processing use case: {use_case}")
+            
+            # Create use case temp folder
+            uc_temp_folder = self.create_use_case_temp_folder(job_structure.temp_folder, use_case)
             
             # Update job record with current use case
             job_record.status = f"processing_{use_case.lower()}"
@@ -263,19 +279,26 @@ class JobProcessor:
             
             # Small delay to ensure status is visible
             await asyncio.sleep(0.2)
-            
+            output_dir_ = job_structure.temp_folder / use_case
+            output_dir_.mkdir(exist_ok=True, parents=True)
             try:
                 if use_case.lower() == "uc1":
-                    # Wrap the analysis in asyncio.create_task to avoid blocking
+                    # Process with UC1 agent
                     result = await asyncio.create_task(run_uc1_analysis(
-                        file_path=str(file_path),
-                        unique_filename=f"{file_path.stem}_{job_id}"
+                        file_path=str(current_input_file),
+                        temp_folder=uc_temp_folder,
+                        unique_filename=f"{current_input_file.stem}_{job_id}",
+                        input_file_=input_folder_ / current_input_file.name,
+                        output_dir_=output_dir_,
                     ))
                 elif use_case.lower() == "uc4":
-                    # Wrap the analysis in asyncio.create_task to avoid blocking
+                    # Process with UC4 agent
                     result = await asyncio.create_task(run_uc4_analysis(
-                        file_path=str(file_path),
-                        unique_filename=f"{file_path.stem}_{job_id}"
+                        file_path=str(current_input_file),
+                        temp_folder=uc_temp_folder,
+                        unique_filename=f"{current_input_file.stem}_{job_id}",
+                        input_file_=input_folder_ / current_input_file.name,
+                        output_dir_=output_dir_,
                     ))
                 else:
                     logger.error(f"Unknown use case: {use_case}")
@@ -283,7 +306,13 @@ class JobProcessor:
                 
                 results[use_case] = result
                 final_result = result  # Keep last result as final
-                logger.info(f"Successfully processed {file_path} with {use_case}")
+                
+                # For next use case, use the output of this use case as input
+                if hasattr(result, 'output_file_path') and result.output_file_path and Path(result.output_file_path).exists():
+                    current_input_file = Path(result.output_file_path)
+                    logger.info(f"Using output of {use_case} as input for next use case: {current_input_file}")
+                
+                logger.info(f"Successfully processed with {use_case}")
                 
                 # Update status after each use case completes
                 job_record.status = f"completed_{use_case.lower()}"
@@ -292,7 +321,7 @@ class JobProcessor:
                 await asyncio.sleep(0.1)  # Brief pause for status visibility
                 
             except Exception as e:
-                logger.error(f"Error processing {file_path} with {use_case}: {str(e)}")
+                logger.error(f"Error processing with {use_case}: {str(e)}")
                 job_record.status = "failed"
                 job_record.error_message = str(e)
                 job_record.completed_at = datetime.utcnow()
@@ -300,13 +329,31 @@ class JobProcessor:
                 await self._broadcast_job_update(job_record)
                 await self._broadcast_stats_update()
                 raise
+            input_folder_ = output_dir_
+            shutil.rmtree(job_structure.outputs_folder)
+            shutil.copytree(output_dir_, job_structure.outputs_folder, dirs_exist_ok=True)
+        
+        # Copy final result to outputs folder (only the last step output)
+        if final_result and hasattr(final_result, 'output_file_path') and final_result.output_file_path:
+            final_output_file = Path(final_result.output_file_path)
+            if final_output_file.exists():
+                outputs_final_file = job_structure.outputs_folder / f"final_{original_file_path.name}"
+                # shutil.copy2(final_output_file, outputs_final_file)
+                logger.info(f"Copied final result to outputs folder: {outputs_final_file}")
+                
+                # Update job record with final output path
+                job_record.result_file_path = str(outputs_final_file)
         
         # Update job with final results and metrics
-        if final_result and hasattr(final_result, 'output_file_path'):
-            job_record.result_file_path = final_result.output_file_path
+        if final_result:
             job_record.results = json.dumps({
-                "output_file_path": final_result.output_file_path,
-                "processing_details": str(results)
+                "output_file_path": job_record.result_file_path if hasattr(job_record, 'result_file_path') else "",
+                "processing_details": str(results),
+                "job_structure": {
+                    "inputs_folder": str(job_structure.inputs_folder),
+                    "temp_folder": str(job_structure.temp_folder),
+                    "outputs_folder": str(job_structure.outputs_folder)
+                }
             })
             
             # Update job metrics based on result type

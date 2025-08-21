@@ -12,6 +12,7 @@ from sqlalchemy.sql import func
 # Local application imports
 from app.db import get_db_session, JobRecord
 from app.schemas import JobStatistics
+from app.core.config import settings
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -96,7 +97,6 @@ async def get_statistics():
 @router.get("/config")
 async def get_app_config():
     """Get application configuration"""
-    from app.core.config import settings
 
     return {
         "data_directory": str(settings.inputs_dir.resolve()),
@@ -112,34 +112,34 @@ async def get_app_config():
     }
 
 
-@router.get("/health")
-async def health_check():
-    """Comprehensive health check for the data quality platform"""
-    from app.db import get_db_session
-    from sqlalchemy import text
+# @router.get("/health")
+# async def health_check():
+#     """Comprehensive health check for the data quality platform"""
+#     from app.db import get_db_session
+#     from sqlalchemy import text
 
-    # Test database connection
-    try:
-        with get_db_session() as db:
-            db.execute(text("SELECT 1"))
-        db_status = "healthy"
-    except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
+#     # Test database connection
+#     try:
+#         with get_db_session() as db:
+#             db.execute(text("SELECT 1"))
+#         db_status = "healthy"
+#     except Exception as e:
+#         db_status = f"unhealthy: {str(e)}"
 
-    # Test upload directory
-    from app.core.config import settings
+#     # Test upload directory
+#     from app.core.config import settings
 
-    upload_dir_status = (
-        "accessible" if settings.upload_dir.exists() else "not accessible"
-    )
-    output_dir_status = (
-        "accessible" if settings.output_dir.exists() else "not accessible"
-    )
+#     upload_dir_status = (
+#         "accessible" if settings.uploads_dir.exists() else "not accessible"
+#     )
+#     output_dir_status = (
+#         "accessible" if settings.outputs_dir.exists() else "not accessible"
+#     )
 
-    return {
-        "status": "healthy" if db_status == "healthy" else "unhealthy",
-        "database": db_status,
-        "upload_directory": upload_dir_status,
-        "output_directory": output_dir_status,
-        "timestamp": "2025-08-20T00:00:00Z",
-    }
+#     return {
+#         "status": "healthy" if db_status == "healthy" else "unhealthy",
+#         "database": db_status,
+#         "upload_directory": upload_dir_status,
+#         "output_directory": output_dir_status,
+#         "timestamp": "2025-08-20T00:00:00Z",
+#     }

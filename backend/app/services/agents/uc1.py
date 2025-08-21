@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 # Local application imports
 from .base_config import AgentConfig, log_agent_activity
-
+from ..new_agents import uc1_agent
 
 class UC1AnalysisResult(BaseModel):
     """Pydantic model for UC1 analysis results"""
@@ -95,6 +95,17 @@ class UC1Agent:
                 "",
                 "Your primary task is to analyze CSV files for incomplete/sparse data patterns and create output files with flag columns.",
                 "",
+                "DATA WORKFLOW STRUCTURE:",
+                "- INPUT FILES: Located in inputs/job_X/ subdirectories (read from these locations)",
+                "- TEMP FILES: Write intermediate results to temp/job_X/uc_UC1/ subdirectories",
+                "- OUTPUT FILES: Final results will be copied to outputs/job_X/ by the system",
+                "",
+                "FOLDER PROCESSING RULES:",
+                "- ALWAYS read input CSV from the exact path provided in the prompt",
+                "- ALWAYS write output CSV to the exact temp folder path provided in the prompt", 
+                "- DO NOT write directly to any outputs/ folder - use temp/ folder only",
+                "- The system will handle final copying from temp to outputs",
+                "",
                 "IMPORTANT CONSTRAINTS:",
                 f"- NEVER load more than {settings.max_prompt_rows} rows of raw data into your prompt/context",
                 "- Always use DuckDB aggregations and summaries for analysis",
@@ -106,7 +117,7 @@ class UC1Agent:
                 "2. Identify rows with missing or incomplete data using aggregated queries",
                 "3. Calculate completeness metrics for each column using COUNT() and statistical functions",
                 "4. Add flag columns to indicate data quality issues",
-                "5. Export results as a new CSV file",
+                "5. Export results as a new CSV file to the specified temp folder",
                 "",
                 "DATA COMPLETENESS ANALYSIS CRITERIA:",
                 "- A row is considered INCOMPLETE if it has missing values in critical columns",
@@ -119,7 +130,7 @@ class UC1Agent:
                 "- 'completeness_score': Row-level completeness percentage (0-100)",
                 "- 'quality_flag': Text flag ('COMPLETE', 'PARTIAL', 'INCOMPLETE')",
                 "",
-                "ALWAYS use DuckDB for efficient data processing and export results as CSV.",
+                "ALWAYS use DuckDB for efficient data processing and export results as CSV to temp folder.",
                 "Focus on providing actionable insights about data completeness.",
             ],
             show_tool_calls=True,
@@ -128,13 +139,14 @@ class UC1Agent:
         )
 
     async def analyze_file_for_completeness(
-        self, file_path: str, unique_filename: Optional[str] = None
+        self, file_path: str, temp_folder: Path, unique_filename: Optional[str] = None
     ) -> UC1AnalysisResult:
         """
         Analyze a CSV file for data completeness using DuckDB
 
         Args:
-            file_path: Path to the CSV file to analyze
+            file_path: Path to the CSV file to analyze (should be in inputs folder)
+            temp_folder: Path to temp folder where outputs should be written
             unique_filename: Optional unique filename for output file
 
         Returns:
@@ -147,48 +159,43 @@ class UC1Agent:
             log_agent_activity(
                 self.agent_name,
                 f"Starting UC1 analysis for {file_path}",
-                {"job_id": job_id, "input_file": file_path},
+                {"job_id": job_id, "input_file": file_path, "temp_folder": str(temp_folder)},
             )
 
             # Validate input file
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Input file not found: {file_path}")
 
-            # Generate output filename with original name preserved
+            # Ensure temp folder exists
+            temp_folder.mkdir(parents=True, exist_ok=True)
+
+            # Generate output filename - write to temp folder, not outputs
             input_path = Path(file_path)
             if unique_filename:
-                # Extract original filename from unique filename if it contains timestamp prefix
-                if unique_filename.startswith(('UC1_', 'UC4_')):
-                    # Remove UC prefix and timestamp to get original name
-                    parts = unique_filename.split('_', 3)
-                    if len(parts) >= 4:
-                        # Use extracted original name
-                        pass
-                    else:
-                        # Use unique filename as is
-                        pass
-                else:
-                    # Use filename as is
-                    pass
-            
-            # Use same filename as input
-            original_filename = input_path.name
+                output_filename = f"{unique_filename}.csv"
+            else:
+                # Use original filename with UC1 suffix
+                output_filename = f"uc1_processed_{input_path.stem}.csv"
 
-            # Output to the outputs directory
-            from app.core.config import settings
-            output_path = settings.outputs_dir / original_filename
+            # Output to the temp directory (NOT outputs directory)
+            output_path = temp_folder / output_filename
+            output_path.parent.mkdir(exist_ok=True, parents=True)
 
             # Prepare analysis instructions
             analysis_prompt = f"""
             You are a data quality agent for UC1 (Completeness Analysis). 
             Analyze the CSV file at '{file_path}' for data completeness and quality issues.
             
+            IMPORTANT: Read from the inputs folder, write to the temp folder.
+            INPUT: '{input_path.parent}' (from inputs directory)
+            OUTPUT: '{output_path.parent}' (to temp directory for intermediate processing)
+            
             REQUIRED TASKS:
-            1. Load the CSV file into DuckDB
+            1. Load the CSV file into DuckDB from: '{file_path}'
             2. Analyze each column for missing/incomplete data
             3. Calculate completeness metrics
             4. Add quality indicator columns
-            5. Export the enhanced dataset to '{output_path}'
+            5. Export the enhanced dataset to: '{output_path}'
             
             COMPLETENESS ANALYSIS:
             - Identify missing values: NULL, empty strings, 'N/A', 'null', whitespace-only
@@ -359,14 +366,18 @@ def get_uc1_agent() -> UC1Agent:
 
 async def run_uc1_analysis(
     file_path: str,
+    temp_folder: Path,
     reference_file_path: Optional[str] = None,
     unique_filename: Optional[str] = None,
+    input_file_: Path = None,
+    output_dir_: Path = None,
 ) -> UC1AnalysisResult:
     """
     Run UC1 incomplete data analysis
 
     Args:
-        file_path: Path to file to analyze
+        file_path: Path to file to analyze (in inputs folder)
+        temp_folder: Path to temp folder for intermediate outputs
         reference_file_path: Optional reference file for comparison (now used as main input)
         unique_filename: Optional unique filename to use for output file
 
@@ -378,6 +389,9 @@ async def run_uc1_analysis(
     # Use reference_file_path as the primary input, fallback to file_path
     input_file = reference_file_path if reference_file_path else file_path
 
+    await uc1_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+
+
     return await agent.analyze_file_for_completeness(
-        input_file, unique_filename=unique_filename
+        input_file, temp_folder=temp_folder, unique_filename=unique_filename
     )
