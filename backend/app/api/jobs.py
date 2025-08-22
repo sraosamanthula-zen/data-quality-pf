@@ -30,66 +30,60 @@ async def list_output_files(db: Session = Depends(get_db)):
     outputs_directory = str(settings.outputs_dir)
     allowed_base_dir = os.path.abspath(str(settings.outputs_dir))
     abs_outputs_directory = os.path.abspath(outputs_directory)
+    # Basic validation
     if not abs_outputs_directory.startswith(allowed_base_dir):
-        return {
-            "files": [],
-            "directory": outputs_directory,
-            "message": "Invalid output directory",
-        }
+        return {"files": [], "directory": outputs_directory, "message": "Invalid output directory"}
 
     if not os.path.exists(abs_outputs_directory):
-        return {
-            "files": [],
-            "directory": outputs_directory,
-            "message": "Output directory not found",
-        }
+        return {"files": [], "directory": outputs_directory, "message": "Output directory not found"}
 
     output_files = []
 
-    # Get all completed jobs that have output files
-    completed_jobs = (
-        db.query(JobRecord)
-        .filter(JobRecord.status == "completed", JobRecord.results_json.isnot(None))
-        .all()
-    )
+    # Walk the outputs directory recursively and list all files
+    for root, dirs, files in os.walk(outputs_directory):
+        for fname in files:
+            try:
+                file_path = os.path.join(root, fname)
+                if not os.path.isfile(file_path):
+                    continue
 
-    for job in completed_jobs:
-        try:
-            if job.results_json:
-                job_results = json.loads(job.results_json)
-                output_file_path = job_results.get("output_file_path")
-                unique_filename = job_results.get("unique_filename")
+                stat = os.stat(file_path)
+                rel_path = os.path.relpath(file_path, outputs_directory)
+                path_parts = rel_path.split(os.sep)
 
-                if output_file_path and os.path.exists(output_file_path):
-                    stat = os.stat(output_file_path)
-                    filename = os.path.basename(output_file_path)
+                batch_name = "individual"
+                if len(path_parts) >= 2 and path_parts[0].startswith("batch_"):
+                    batch_name = path_parts[0]
 
-                    # Determine batch info from path
-                    rel_path = os.path.relpath(output_file_path, outputs_directory)
-                    path_parts = rel_path.split(os.sep)
-
-                    batch_name = "individual"
-                    if len(path_parts) >= 2 and path_parts[0].startswith("batch_"):
-                        batch_name = path_parts[0]
-
-                    output_files.append(
-                        {
-                            "filename": filename,
-                            "path": output_file_path,
-                            "size": stat.st_size,
-                            "created": stat.st_mtime,
-                            "status": "completed",
-                            "batch_name": batch_name,
-                            "uc_type": "processed",
-                            "relative_path": rel_path,
-                            "job_id": job.id,
-                            "original_filename": job.filename,
-                            "unique_filename": unique_filename,
-                        }
+                # Try to heuristically find a matching job by filename
+                job_match = None
+                try:
+                    # Prefer exact match on result_file_path or filename -> job.filename
+                    job_match = (
+                        db.query(JobRecord)
+                        .filter(
+                            (JobRecord.result_file_path == file_path) | (JobRecord.filename == fname)
+                        )
+                        .first()
                     )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            # Skip jobs with invalid results JSON
-            continue
+                except Exception:
+                    job_match = None
+
+                output_files.append({
+                    "filename": fname,
+                    "path": file_path,
+                    "size": stat.st_size,
+                    "created": stat.st_mtime,
+                    "status": "available",
+                    "batch_name": batch_name,
+                    "uc_type": "processed",
+                    "relative_path": rel_path,
+                    "job_id": job_match.id if job_match else None,
+                    "original_filename": job_match.filename if job_match else None,
+                })
+            except Exception:
+                # Skip files that cause stat or permission errors
+                continue
 
     # Sort by creation time (newest first)
     output_files.sort(key=lambda x: x["created"], reverse=True)
@@ -98,7 +92,6 @@ async def list_output_files(db: Session = Depends(get_db)):
         "files": output_files,
         "directory": outputs_directory,
         "total_files": len(output_files),
-        "completed_jobs": len(completed_jobs),
     }
 
 

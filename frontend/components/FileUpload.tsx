@@ -1037,8 +1037,8 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
 
       {/* Directory Browser Modal */}
       {showDirectoryBrowser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70 flex items-center justify-center z-50 theme-transition">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 max-h-96 overflow-y-auto shadow-2xl theme-transition">
+        <div className="fixed inset-0 bg-black bg-opacity-50 dark:bg-black dark:bg-opacity-70 flex items-center justify-center z-50 p-4 theme-transition">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl theme-transition">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 theme-transition">
                 Browse Directories
@@ -1051,7 +1051,7 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
               </button>
             </div>
             
-            <div className="space-y-2">
+            <div className="space-y-2 overflow-y-auto max-h-[60vh]">
               {loadingDirectories ? (
                 <div className="text-center py-4">
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 dark:border-blue-400 mx-auto theme-transition"></div>
@@ -1062,10 +1062,10 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                   <button
                     key={index}
                     onClick={() => selectDirectory(directory)}
-                    className="w-full text-left px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors theme-transition"
+                    className="w-full text-left px-3 py-2 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md transition-colors theme-transition break-all"
                   >
-                    <div className="flex items-center space-x-2">
-                      <FolderIcon className="h-4 w-4 text-blue-500 dark:text-blue-400 theme-transition" />
+                    <div className="flex items-start space-x-2">
+                      <FolderIcon className="h-4 w-4 text-blue-500 dark:text-blue-400 mt-0.5 flex-shrink-0 theme-transition" />
                       <span className="text-sm text-gray-900 dark:text-gray-100 theme-transition">{directory}</span>
                     </div>
                   </button>

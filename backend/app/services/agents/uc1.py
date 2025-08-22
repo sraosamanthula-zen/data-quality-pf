@@ -371,7 +371,7 @@ async def run_uc1_analysis(
     unique_filename: Optional[str] = None,
     input_file_: Path = None,
     output_dir_: Path = None,
-) -> UC1AnalysisResult:
+): # -> UC1AnalysisResult:
     """
     Run UC1 incomplete data analysis
 
@@ -389,9 +389,9 @@ async def run_uc1_analysis(
     # Use reference_file_path as the primary input, fallback to file_path
     input_file = reference_file_path if reference_file_path else file_path
 
-    await uc1_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+    return await uc1_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
 
 
-    return await agent.analyze_file_for_completeness(
-        input_file, temp_folder=temp_folder, unique_filename=unique_filename
-    )
+    # return await agent.analyze_file_for_completeness(
+    #     input_file, temp_folder=temp_folder, unique_filename=unique_filename
+    # )

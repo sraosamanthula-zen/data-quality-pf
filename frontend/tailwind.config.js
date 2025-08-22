@@ -36,6 +36,15 @@ module.exports = {
           600: '#dc2626',
         },
       },
+      animation: {
+        'spin-clockwise': 'spin-clockwise 1s linear infinite',
+      },
+      keyframes: {
+        'spin-clockwise': {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' },
+        },
+      },
     },
   },
   plugins: [],

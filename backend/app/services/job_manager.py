@@ -160,65 +160,68 @@ class JobProcessor:
         logger.info(f"Created use case temp folder: {uc_temp_folder}")
         return uc_temp_folder
     
-    async def process_csv_with_uc1(
-        self, 
-        csv_file: Path, 
-        reference_file: Optional[Path],
-        temp_folder: Path,
-        job_id: int
-    ) -> UC1AnalysisResult:
-        """
-        Process a single CSV file with UC1 (sparse data detection)
-        """
-        logger.info(f"Processing {csv_file} with UC1 agent")
+    # async def process_csv_with_uc1(
+    #     self, 
+    #     csv_file: Path, 
+    #     reference_file: Optional[Path],
+    #     temp_folder: Path,
+    #     job_id: int
+    # ):# -> UC1AnalysisResult:
+    #     """
+    #     Process a single CSV file with UC1 (sparse data detection)
+    #     """
+    #     logger.info(f"Processing {csv_file} with UC1 agent")
         
-        # Create unique filename for this processing
-        unique_filename = f"uc1_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    #     # Create unique filename for this processing
+    #     unique_filename = f"uc1_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Run UC1 analysis with temp folder
-        result = await run_uc1_analysis(
-            file_path=str(csv_file),
-            temp_folder=temp_folder,
-            reference_file_path=str(reference_file) if reference_file else None,
-            unique_filename=unique_filename
-        )
+    #     # Run UC1 analysis with temp folder
+    #     result = await run_uc1_analysis( #TODO: Is this even running?
+    #         file_path=str(csv_file),
+    #         temp_folder=temp_folder,
+    #         reference_file_path=str(reference_file) if reference_file else None,
+    #         unique_filename=unique_filename
+    #     )
+    #     print("*" * 10)
+    #     print(result.content)
+    #     print("*" * 10)
+
+    #     # Copy input file to temp folder for archival
+    #     temp_input_file = temp_folder / f"input_{csv_file.name}"
+    #     shutil.copy2(csv_file, temp_input_file)
+    #     logger.info(f"Archived input file to: {temp_input_file}")
         
-        # Copy input file to temp folder for archival
-        temp_input_file = temp_folder / f"input_{csv_file.name}"
-        shutil.copy2(csv_file, temp_input_file)
-        logger.info(f"Archived input file to: {temp_input_file}")
-        
-        return result
+    #     return result
     
-    async def process_csv_with_uc4(
-        self, 
-        csv_file: Path, 
-        temp_folder: Path,
-        job_id: int
-    ) -> UC4AnalysisResult:
-        """
-        Process a single CSV file with UC4 (duplicate detection and removal)
-        """
-        logger.info(f"Processing {csv_file} with UC4 agent")
+    # async def process_csv_with_uc4(
+    #     self, 
+    #     csv_file: Path, 
+    #     temp_folder: Path,
+    #     job_id: int
+    # ) -> UC4AnalysisResult:
+    #     """
+    #     Process a single CSV file with UC4 (duplicate detection and removal)
+    #     """
+    #     logger.info(f"Processing {csv_file} with UC4 agent")
         
-        # Create unique filename for this processing
-        unique_filename = f"uc4_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    #     # Create unique filename for this processing
+    #     unique_filename = f"uc4_{job_id}_{csv_file.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Run UC4 analysis with temp folder
-        result = await run_uc4_analysis(
-            file_path=str(csv_file),
-            temp_folder=temp_folder,
-            unique_filename=unique_filename
-        )
+    #     # Run UC4 analysis with temp folder
+    #     result = await run_uc4_analysis(
+    #         file_path=str(csv_file),
+    #         temp_folder=temp_folder,
+    #         unique_filename=unique_filename
+    #     )
         
-        # Save cleaned CSV to temp folder
-        if hasattr(result, 'output_file_path') and result.output_file_path:
-            temp_output_file = temp_folder / f"cleaned_{csv_file.name}"
-            if Path(result.output_file_path).exists():
-                shutil.copy2(result.output_file_path, temp_output_file)
-                logger.info(f"Saved cleaned CSV to: {temp_output_file}")
+    #     # Save cleaned CSV to temp folder
+    #     if hasattr(result, 'output_file_path') and result.output_file_path:
+    #         temp_output_file = temp_folder / f"cleaned_{csv_file.name}"
+    #         if Path(result.output_file_path).exists():
+    #             shutil.copy2(result.output_file_path, temp_output_file)
+    #             logger.info(f"Saved cleaned CSV to: {temp_output_file}")
         
-        return result
+    #     return result
     
     async def execute_job_workflow(self, job_id: int, selected_use_cases: List[str]) -> Dict:
         """
@@ -291,6 +294,9 @@ class JobProcessor:
                         input_file_=input_folder_ / current_input_file.name,
                         output_dir_=output_dir_,
                     ))
+                    print("*" * 50)
+                    print(result.content)
+                    print("*" * 50)
                 elif use_case.lower() == "uc4":
                     # Process with UC4 agent
                     result = await asyncio.create_task(run_uc4_analysis(

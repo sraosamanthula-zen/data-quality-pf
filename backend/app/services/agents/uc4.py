@@ -412,13 +412,13 @@ async def run_uc4_analysis(
     """
     agent = get_uc4_agent()
 
-    await uc4_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+    return await uc4_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
 
 
     # Use file_path as the primary input for UC4
-    return await agent.detect_and_remove_duplicates(
-        input_file_path=file_path,
-        temp_folder=temp_folder,
-        reference_file_path=reference_file_path,
-        unique_filename=unique_filename,
-    )
+    # return await agent.detect_and_remove_duplicates(
+    #     input_file_path=file_path,
+    #     temp_folder=temp_folder,
+    #     reference_file_path=reference_file_path,
+    #     unique_filename=unique_filename,
+    # )
