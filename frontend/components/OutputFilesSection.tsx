@@ -276,11 +276,11 @@ export default function OutputFilesSection({ onJobUpdate }: OutputFilesSectionPr
                           {file.uc_type.toUpperCase()}
                         </span>
                       )}
-                      {file.batch_name && (
+                      {/* {file.batch_name && (
                         <span className={`text-xs font-medium px-2 py-1 rounded-full ${getBatchBadgeStyle(file.batch_name)} theme-transition`}>
                           {file.batch_name === 'individual' ? 'Individual' : file.batch_name.replace('batch_', 'Batch ')}
                         </span>
-                      )}
+                      )} */}
                     </div>
                   </div>
                 </div>
