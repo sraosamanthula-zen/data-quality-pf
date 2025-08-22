@@ -37,7 +37,7 @@ uc1_agent = Agent(
     debug_mode=True,
 )
 
-uc4_agent = Agent(
+uc4_agent = Agent(#as well as original table
     model=AzureOpenAI("gpt-4o"),
     response_model=UC4Result,
     tools=[DuckDbTools(export_tables=True)],
@@ -45,7 +45,7 @@ uc4_agent = Agent(
     instructions=[
         "Step 1: Use DuckDb toolset to read the input path provided. The table name should match the file name.",
         "Step 2: Check if the table contains any duplicates and remove them, updating the table.",
-        "Step 3: Export the updated table as well as original table in the same format as the input at the output directory (do not add the table name to the output directory while calling DuckDb export). Ensure the deduplicated table name is consistent, e.g., append '_dedup' to the original file name.",
+        "Step 3: Export the updated table in the same format as the input at the output directory (do not add the table name to the output directory while calling DuckDb export). Ensure the deduplicated table name is consistent, e.g., append '_dedup' to the original file name.",
         "Step 4: Verify if the table is exported correctly to the output path.",
     ],
     debug_mode=True,

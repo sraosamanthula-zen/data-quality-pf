@@ -366,7 +366,7 @@ def get_uc1_agent() -> UC1Agent:
 
 async def run_uc1_analysis(
     file_path: str,
-    temp_folder: Path,
+    # temp_folder: Path,
     reference_file_path: Optional[str] = None,
     unique_filename: Optional[str] = None,
     input_file_: Path = None,

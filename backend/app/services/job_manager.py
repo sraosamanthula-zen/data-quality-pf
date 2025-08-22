@@ -271,7 +271,7 @@ class JobProcessor:
             logger.info(f"Processing use case: {use_case}")
             
             # Create use case temp folder
-            uc_temp_folder = self.create_use_case_temp_folder(job_structure.temp_folder, use_case)
+            # uc_temp_folder = self.create_use_case_temp_folder(job_structure.temp_folder, use_case)
             
             # Update job record with current use case
             job_record.status = f"processing_{use_case.lower()}"
@@ -289,7 +289,7 @@ class JobProcessor:
                     # Process with UC1 agent
                     result = await asyncio.create_task(run_uc1_analysis(
                         file_path=str(current_input_file),
-                        temp_folder=uc_temp_folder,
+                        # temp_folder=uc_temp_folder,
                         unique_filename=f"{current_input_file.stem}_{job_id}",
                         input_file_=input_folder_ / current_input_file.name,
                         output_dir_=output_dir_,
@@ -301,7 +301,7 @@ class JobProcessor:
                     # Process with UC4 agent
                     result = await asyncio.create_task(run_uc4_analysis(
                         file_path=str(current_input_file),
-                        temp_folder=uc_temp_folder,
+                        # temp_folder=uc_temp_folder,
                         unique_filename=f"{current_input_file.stem}_{job_id}",
                         input_file_=input_folder_ / current_input_file.name,
                         output_dir_=output_dir_,
