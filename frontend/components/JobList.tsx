@@ -342,32 +342,44 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex flex-col space-y-1">
-                    {job.status === 'failed' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
-                        Failed
-                      </span>
-                    )}
-                    {job.status !== 'failed' && job.is_sparse === true && (
-                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
-                        Sparse
-                      </span>
-                    )}
-                    {job.status !== 'failed' && job.has_duplicates === true && (
-                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-800">
-                        Duplicates
-                      </span>
-                    )}
-                    {job.status === 'completed' && job.is_sparse === false && job.has_duplicates === false && (
-                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800">
-                        Clean
-                      </span>
-                    )}
-                    {job.status !== 'completed' && job.status !== 'failed' && (job.is_sparse === null || job.has_duplicates === null) && (
-                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-800">
-                        Pending
-                      </span>
-                    )}
+                  <div className="flex items-center">
+                    {(() => {
+                      // Priority: failed > duplicates > sparse > clean > pending
+                      if (job.status === 'failed') {
+                        return (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 truncate">
+                            Failed
+                          </span>
+                        );
+                      }
+                      if (job.has_duplicates === true) {
+                        return (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 truncate">
+                            Duplicates
+                          </span>
+                        );
+                      }
+                      if (job.is_sparse === true) {
+                        return (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 truncate">
+                            Sparse
+                          </span>
+                        );
+                      }
+                      if (job.status === 'completed' && job.is_sparse === false && job.has_duplicates === false) {
+                        return (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 truncate">
+                            Clean
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 truncate">
+                          Pending
+                        </span>
+                      );
+                    })()}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
