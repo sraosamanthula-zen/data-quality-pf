@@ -86,8 +86,8 @@ async def send_initial_data(websocket: WebSocket):
                         "status": job.status,
                         "created_at": job.created_at.isoformat() if job.created_at else None,
                         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-                        "error_message": job.error_message,
-                        "quality_score": job.quality_score,
+                        "is_sparse": job.is_sparse,
+                        "has_duplicates": job.has_duplicates,
                         "selected_ucs": job.selected_ucs
                     })
                 

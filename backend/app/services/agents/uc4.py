@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 # Local application imports
 from .base_config import AgentConfig, log_agent_activity
-from ..new_agents import uc4_agent
+from ..new_agents import uc4_agent, UC4Result
 
 
 class UC4AnalysisResult(BaseModel):
@@ -392,12 +392,12 @@ def get_uc4_agent() -> UC4Agent:
 
 async def run_uc4_analysis(
     file_path: str, 
-    temp_folder: Path,
+    # temp_folder: Path,
     reference_file_path: Optional[str] = None, 
     unique_filename: Optional[str] = None,
     input_file_: Path = None,
     output_dir_: Path = None,
-) -> UC4AnalysisResult:
+) -> UC4Result:
     """
     Run UC4 duplicate detection analysis
 
@@ -410,9 +410,10 @@ async def run_uc4_analysis(
     Returns:
         UC4AnalysisResult: Analysis results and output file path
     """
-    agent = get_uc4_agent()
+    # agent = get_uc4_agent()
 
-    return await uc4_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+    result = await uc4_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+    return result.content
 
 
     # Use file_path as the primary input for UC4

@@ -51,19 +51,11 @@ class JobRecord(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # Results and metrics
-    quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Results and metrics - simplified to only include core data quality indicators
     is_sparse: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     has_duplicates: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    duplicate_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    duplicate_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    total_rows_original: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    total_rows_processed: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    # Result data
-    results: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    results_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    result_file_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    
+    # Error handling
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 

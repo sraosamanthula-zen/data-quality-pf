@@ -7,7 +7,6 @@ import logging
 
 # Third-party imports
 from fastapi import APIRouter
-from sqlalchemy.sql import func
 
 # Local application imports
 from app.db import get_db_session, JobRecord
@@ -74,20 +73,12 @@ async def get_statistics():
                 db.query(JobRecord).filter(JobRecord.status == "failed").count()
             )
 
-            # Calculate average quality score
-            avg_quality = (
-                db.query(func.avg(JobRecord.quality_score))
-                .filter(JobRecord.quality_score.isnot(None))
-                .scalar()
-            )
-
             return JobStatistics(
                 total_jobs=total_jobs,
                 pending_jobs=pending_jobs,
                 processing_jobs=processing_jobs,
                 completed_jobs=completed_jobs,
                 failed_jobs=failed_jobs,
-                average_quality_score=float(avg_quality) if avg_quality else None,
             )
         except Exception as e:
             logger.error(f"Error getting statistics: {e}")

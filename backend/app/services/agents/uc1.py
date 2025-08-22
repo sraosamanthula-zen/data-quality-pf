@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 # Local application imports
 from .base_config import AgentConfig, log_agent_activity
-from ..new_agents import uc1_agent
+from ..new_agents import uc1_agent, UC1Result
 
 class UC1AnalysisResult(BaseModel):
     """Pydantic model for UC1 analysis results"""
@@ -371,7 +371,7 @@ async def run_uc1_analysis(
     unique_filename: Optional[str] = None,
     input_file_: Path = None,
     output_dir_: Path = None,
-): # -> UC1AnalysisResult:
+) -> UC1Result: # -> UC1AnalysisResult:
     """
     Run UC1 incomplete data analysis
 
@@ -384,13 +384,13 @@ async def run_uc1_analysis(
     Returns:
         UC1AnalysisResult: Analysis results and output file path
     """
-    agent = get_uc1_agent()
+    # agent = get_uc1_agent()
 
-    # Use reference_file_path as the primary input, fallback to file_path
-    input_file = reference_file_path if reference_file_path else file_path
+    # # Use reference_file_path as the primary input, fallback to file_path
+    # input_file = reference_file_path if reference_file_path else file_path
 
-    return await uc1_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
-
+    result = await uc1_agent.arun(f"Process the input file path at {input_file_} and output directory path at {output_dir_}")
+    return result.content
 
     # return await agent.analyze_file_for_completeness(
     #     input_file, temp_folder=temp_folder, unique_filename=unique_filename

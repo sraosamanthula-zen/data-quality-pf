@@ -3,17 +3,15 @@ Jobs management routes for the Data Quality Platform
 """
 
 # Standard library imports
-import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 # Third-party imports
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 
 # Local application imports
 from app.core.config import settings
@@ -58,12 +56,10 @@ async def list_output_files(db: Session = Depends(get_db)):
                 # Try to heuristically find a matching job by filename
                 job_match = None
                 try:
-                    # Prefer exact match on result_file_path or filename -> job.filename
+                    # Match on filename since result_file_path field was removed
                     job_match = (
                         db.query(JobRecord)
-                        .filter(
-                            (JobRecord.result_file_path == file_path) | (JobRecord.filename == fname)
-                        )
+                        .filter(JobRecord.filename == fname)
                         .first()
                     )
                 except Exception:
@@ -205,20 +201,12 @@ async def get_job_statistics(db: Session = Depends(get_db)):
     completed_jobs = db.query(JobRecord).filter(JobRecord.status == "completed").count()
     failed_jobs = db.query(JobRecord).filter(JobRecord.status == "failed").count()
 
-    # Calculate average quality score
-    avg_quality = (
-        db.query(func.avg(JobRecord.quality_score))
-        .filter(JobRecord.quality_score.isnot(None))
-        .scalar()
-    )
-
     return JobStatistics(
         total_jobs=total_jobs,
         pending_jobs=pending_jobs,
         processing_jobs=processing_jobs,
         completed_jobs=completed_jobs,
         failed_jobs=failed_jobs,
-        average_quality_score=float(avg_quality) if avg_quality else None,
     )
 
 
@@ -233,9 +221,14 @@ async def get_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
         .all()
     )
 
-    # Convert to dict to include duplicate information
+    # Convert to dict to include simplified job information
     job_list = []
     for job in jobs:
+        # Convert selected_ucs from string to list
+        selected_ucs_list = []
+        if job.selected_ucs:
+            selected_ucs_list = [uc.strip() for uc in job.selected_ucs.split(',')]
+        
         job_dict = {
             "id": job.id,
             "filename": job.filename,
@@ -245,14 +238,9 @@ async def get_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-            "quality_score": job.quality_score,
             "is_sparse": job.is_sparse,
             "has_duplicates": job.has_duplicates,
-            "duplicate_count": job.duplicate_count,
-            "duplicate_percentage": job.duplicate_percentage,
-            "total_rows_original": job.total_rows_original,
-            "total_rows_processed": job.total_rows_processed,
-            "selected_ucs": job.selected_ucs,
+            "selected_ucs": selected_ucs_list,
             "is_reference": job.is_reference,
             "error_message": job.error_message,
         }
@@ -264,8 +252,8 @@ async def get_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db
 @router.get("/activity")
 async def get_agent_activity(
     limit: int = 50,
-    agent_name: str = None,
-    job_id: int = None,
+    agent_name: Optional[str] = None,
+    job_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     """Get recent agent activity logs for debugging and monitoring"""
@@ -349,14 +337,13 @@ async def get_job_details(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Parse results JSON if available
-    results = None
-    if job.results_json:
-        try:
-            results = json.loads(job.results_json)
-        except Exception:
-            results = {"raw_results": job.results_json}
-
+    # No need to parse results JSON since we removed that functionality
+    
+    # Convert selected_ucs from string to list
+    selected_ucs_list = []
+    if job.selected_ucs:
+        selected_ucs_list = [uc.strip() for uc in job.selected_ucs.split(',')]
+    
     return {
         "id": job.id,
         "filename": job.filename,
@@ -366,18 +353,12 @@ async def get_job_details(job_id: int, db: Session = Depends(get_db)):
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
-        "quality_score": job.quality_score,
         "is_sparse": job.is_sparse,
         "has_duplicates": job.has_duplicates,
-        "duplicate_count": job.duplicate_count,
-        "duplicate_percentage": job.duplicate_percentage,
-        "total_rows_original": job.total_rows_original,
-        "total_rows_processed": job.total_rows_processed,
-        "results": results,
-        "error_message": job.error_message,
-        "selected_ucs": job.selected_ucs,
+        "selected_ucs": selected_ucs_list,
         "is_reference": job.is_reference,
         "reference_file_path": job.reference_file_path,
+        "error_message": job.error_message,
     }
 
 
@@ -438,15 +419,7 @@ async def download_job_result(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # First try to use the result_file_path from the job record
-    if job.result_file_path and os.path.exists(job.result_file_path):
-        result_path = job.result_file_path
-        filename = os.path.basename(result_path)
-        return FileResponse(
-            path=result_path, filename=filename, media_type="text/csv"
-        )
-    
-    # Fallback to old logic for backwards compatibility
+    # Look for result files in the outputs directory
     storage_directory = os.getenv("STORAGE_DIRECTORY", "./storage")
     outputs_directory = os.path.join(storage_directory, "outputs")
 

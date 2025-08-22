@@ -8,14 +8,14 @@ Handles:
 - Result storage and archival
 """
 
-import json
 import shutil
 import logging
 import asyncio
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from datetime import datetime
 
+from app.services.new_agents import UC1Result, UC4Result
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
@@ -54,8 +54,8 @@ class JobProcessor:
                 "status": job_record.status,
                 "created_at": job_record.created_at.isoformat() if job_record.created_at else None,
                 "completed_at": job_record.completed_at.isoformat() if job_record.completed_at else None,
-                "error_message": job_record.error_message,
-                "quality_score": job_record.quality_score,
+                "is_sparse": job_record.is_sparse,
+                "has_duplicates": job_record.has_duplicates,
                 "selected_ucs": job_record.selected_ucs
             }
             
@@ -263,7 +263,7 @@ class JobProcessor:
         await asyncio.sleep(0.5)
         
         # Process each use case
-        results = {}
+        results: dict[str, Any] = {}
         final_result = None
         current_input_file = job_input_file  # Start with the input file in job inputs folder
         input_folder_ = current_input_file.parent
@@ -295,7 +295,7 @@ class JobProcessor:
                         output_dir_=output_dir_,
                     ))
                     print("*" * 50)
-                    print(result.content)
+                    print(result)
                     print("*" * 50)
                 elif use_case.lower() == "uc4":
                     # Process with UC4 agent
@@ -311,12 +311,15 @@ class JobProcessor:
                     continue
                 
                 results[use_case] = result
-                final_result = result  # Keep last result as final
+                final_result: UC1Result | UC4Result = result  # Keep last result as final
+
+                current_input_file = Path(result.output_file)
+                logger.info(f"Using output of {use_case} as input for next use case: {current_input_file}")
                 
-                # For next use case, use the output of this use case as input
-                if hasattr(result, 'output_file_path') and result.output_file_path and Path(result.output_file_path).exists():
-                    current_input_file = Path(result.output_file_path)
-                    logger.info(f"Using output of {use_case} as input for next use case: {current_input_file}")
+                # # For next use case, use the output of this use case as input
+                # if hasattr(result, 'output_file_path') and result.output_file_path and Path(result.output_file_path).exists():
+                #     current_input_file = Path(result.output_file_path)
+                #     logger.info(f"Using output of {use_case} as input for next use case: {current_input_file}")
                 
                 logger.info(f"Successfully processed with {use_case}")
                 
@@ -329,7 +332,7 @@ class JobProcessor:
             except Exception as e:
                 logger.error(f"Error processing with {use_case}: {str(e)}")
                 job_record.status = "failed"
-                job_record.error_message = str(e)
+                job_record.error_message = f"Error processing with {use_case}: {str(e)}"
                 job_record.completed_at = datetime.utcnow()
                 self.db.commit()
                 await self._broadcast_job_update(job_record)
@@ -339,44 +342,33 @@ class JobProcessor:
             shutil.rmtree(job_structure.outputs_folder)
             shutil.copytree(output_dir_, job_structure.outputs_folder, dirs_exist_ok=True)
         
-        # Copy final result to outputs folder (only the last step output)
-        if final_result and hasattr(final_result, 'output_file_path') and final_result.output_file_path:
-            final_output_file = Path(final_result.output_file_path)
-            if final_output_file.exists():
-                outputs_final_file = job_structure.outputs_folder / f"final_{original_file_path.name}"
-                # shutil.copy2(final_output_file, outputs_final_file)
-                logger.info(f"Copied final result to outputs folder: {outputs_final_file}")
+        # # Copy final result to outputs folder (only the last step output)
+        # if final_result and hasattr(final_result, 'output_file_path') and final_result.output_file_path:
+        #     final_output_file = Path(final_result.output_file_path)
+        #     if final_output_file.exists():
+        #         outputs_final_file = job_structure.outputs_folder / f"final_{original_file_path.name}"
+        #         # shutil.copy2(final_output_file, outputs_final_file)
+        #         logger.info(f"Copied final result to outputs folder: {outputs_final_file}")
                 
-                # Update job record with final output path
-                job_record.result_file_path = str(outputs_final_file)
+        #         # Update job record with final output path
+        #         job_record.result_file_path = str(outputs_final_file)
         
         # Update job with final results and metrics
-        if final_result:
-            job_record.results = json.dumps({
-                "output_file_path": job_record.result_file_path if hasattr(job_record, 'result_file_path') else "",
-                "processing_details": str(results),
-                "job_structure": {
-                    "inputs_folder": str(job_structure.inputs_folder),
-                    "temp_folder": str(job_structure.temp_folder),
-                    "outputs_folder": str(job_structure.outputs_folder)
-                }
-            })
+        if results:
+            # Note: We no longer store detailed results in the job record
+            # Only keep the simplified data quality indicators
             
-            # Update job metrics based on result type
+            # Update job metrics based on all result types
             from app.services.agents.uc1 import UC1AnalysisResult
             from app.services.agents.uc4 import UC4AnalysisResult
             
-            if isinstance(final_result, UC1AnalysisResult):
-                job_record.quality_score = final_result.overall_quality_score
-                job_record.is_sparse = final_result.incomplete_percentage > 20  # Consider >20% incomplete as sparse
-                job_record.total_rows_processed = final_result.total_rows
-                job_record.total_rows_original = final_result.total_rows
-            elif isinstance(final_result, UC4AnalysisResult):
-                job_record.has_duplicates = final_result.duplicate_percentage > 0
-                job_record.duplicate_percentage = final_result.duplicate_percentage
-                job_record.total_rows_original = final_result.total_rows_original
-                job_record.total_rows_processed = final_result.total_rows_processed
-                job_record.quality_score = final_result.quality_improvement_score
+            # Process results from all use cases
+            for use_case, result in results.items():
+                match result:
+                    case UC1Result(is_sparse=is_sparse):
+                        job_record.is_sparse = is_sparse
+                    case UC4Result(has_duplicates=has_duplicates):
+                        job_record.has_duplicates = has_duplicates
         
         # Update job status to completed
         job_record.status = "completed"

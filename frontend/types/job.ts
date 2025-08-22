@@ -3,7 +3,7 @@ export interface Job {
   filename: string;
   file_path: string;
   job_type: string;
-  selected_ucs?: string;
+  selected_ucs?: string[];
   is_reference?: boolean;
   reference_file_id?: number;
   sparse_compared_to_reference?: boolean;
@@ -11,10 +11,8 @@ export interface Job {
   created_at: string;
   started_at?: string;
   completed_at?: string;
-  quality_score?: number;
   is_sparse?: boolean;
   has_duplicates?: boolean;
-  results?: any;
   error_message?: string;
 }
 
@@ -28,7 +26,6 @@ export interface JobStatistics {
   processing_jobs: number;
   completed_jobs: number;
   failed_jobs: number;
-  average_quality_score?: number;
 }
 
 export interface UploadResponse {

@@ -189,15 +189,15 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
       return;
     }
 
-    // Check if selected UCs have reference files
-    const missingRefFiles = selectedUCs.filter(uc => !referenceFiles[uc]);
-    if (missingRefFiles.length > 0) {
-      setBatchStatus({
-        type: 'error',
-        message: `Please upload reference files for: ${missingRefFiles.join(', ')}`,
-      });
-      return;
-    }
+    // // Check if selected UCs have reference files
+    // const missingRefFiles = selectedUCs.filter(uc => !referenceFiles[uc]);
+    // if (missingRefFiles.length > 0) {
+    //   setBatchStatus({
+    //     type: 'error',
+    //     message: `Please upload reference files for: ${missingRefFiles.join(', ')}`,
+    //   });
+    //   return;
+    // }
 
     setProcessingBatch(true);
     setBatchStatus({ type: null, message: '' });

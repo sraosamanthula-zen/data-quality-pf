@@ -69,25 +69,48 @@ function JobDetailsModal({ job, isOpen, onClose }: JobDetailsModalProps) {
               )}
             </div>
 
-            {job.results && (
-              <div className="mt-6">
-                <h4 className="text-md font-medium text-gray-900 mb-2">Results</h4>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap">
-                    {JSON.stringify(job.results, null, 2)}
-                  </pre>
+            {/* Data Quality Indicators */}
+            <div className="mt-6">
+              <h4 className="text-md font-medium text-gray-900 dark:text-gray-100 mb-3 theme-transition">Data Quality</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400 theme-transition">Sparse Data:</span>
+                  {job.is_sparse === true && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                      Yes
+                    </span>
+                  )}
+                  {job.is_sparse === false && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      No
+                    </span>
+                  )}
+                  {job.is_sparse === null && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      Not Analyzed
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400 theme-transition">Duplicates:</span>
+                  {job.has_duplicates === true && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                      Yes
+                    </span>
+                  )}
+                  {job.has_duplicates === false && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      No
+                    </span>
+                  )}
+                  {job.has_duplicates === null && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      Not Analyzed
+                    </span>
+                  )}
                 </div>
               </div>
-            )}
-
-            {job.error_message && (
-              <div className="mt-6">
-                <h4 className="text-md font-medium text-red-900 mb-2">Error</h4>
-                <div className="bg-red-50 p-4 rounded-lg">
-                  <p className="text-sm text-red-700">{job.error_message}</p>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -297,9 +320,6 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                   {new Date(job.created_at).toLocaleString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {job.quality_score && (
-                    <div>Quality: {job.quality_score}%</div>
-                  )}
                   {job.has_duplicates !== undefined && (
                     <div>Has Duplicates: {job.has_duplicates ? 'Yes' : 'No'}</div>
                   )}

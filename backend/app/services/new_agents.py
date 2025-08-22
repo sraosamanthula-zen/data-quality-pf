@@ -44,6 +44,7 @@ uc4_agent = Agent(#as well as original table
     description="You are a data duplication removal agent.",
     instructions=[
         "Step 1: Use DuckDb toolset to read the input path provided. The table name should match the file name.",
+        "Step 2: Make sure no to look at the contents of the table, if required only do it with strict limit of 10.",
         "Step 2: Check if the table contains any duplicates and remove them, updating the table.",
         "Step 3: Export the updated table in the same format as the input at the output directory (do not add the table name to the output directory while calling DuckDb export). Ensure the deduplicated table name is consistent, e.g., append '_dedup' to the original file name.",
         "Step 4: Verify if the table is exported correctly to the output path.",

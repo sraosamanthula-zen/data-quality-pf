@@ -4,7 +4,7 @@ Pydantic models for API request/response schemas
 
 # Standard library imports
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 
 # Third-party imports
 from pydantic import BaseModel
@@ -16,13 +16,10 @@ class JobResponse(BaseModel):
     job_type: str
     status: str
     created_at: datetime
-    quality_score: Optional[float] = None
     is_sparse: Optional[bool] = None
     has_duplicates: Optional[bool] = None
-    duplicate_count: Optional[int] = None
-    duplicate_percentage: Optional[float] = None
-    total_rows_original: Optional[int] = None
-    total_rows_processed: Optional[int] = None
+    selected_ucs: Optional[List[str]] = None
+    error_message: Optional[str] = None
 
 
 class JobDetails(BaseModel):
@@ -34,15 +31,8 @@ class JobDetails(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    quality_score: Optional[float] = None
     is_sparse: Optional[bool] = None
     has_duplicates: Optional[bool] = None
-    duplicate_count: Optional[int] = None
-    duplicate_percentage: Optional[float] = None
-    total_rows_original: Optional[int] = None
-    total_rows_processed: Optional[int] = None
-    results: Optional[Dict[str, Any]] = None
-    error_message: Optional[str] = None
 
 
 class UploadResponse(BaseModel):
@@ -58,7 +48,6 @@ class JobStatistics(BaseModel):
     processing_jobs: int
     completed_jobs: int
     failed_jobs: int
-    average_quality_score: Optional[float] = None
 
 
 class BatchProcessRequest(BaseModel):

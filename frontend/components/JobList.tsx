@@ -69,22 +69,55 @@ function JobDetailsModal({ job, isOpen, onClose }: JobDetailsModalProps) {
               )}
             </div>
 
-            {job.results && (
-              <div className="mt-6">
-                <h4 className="text-md font-medium text-gray-900 mb-2">Results</h4>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap">
-                    {JSON.stringify(job.results, null, 2)}
-                  </pre>
+            {/* Data Quality Indicators */}
+            <div className="mt-6">
+              <h4 className="text-md font-medium text-gray-900 dark:text-gray-100 mb-3 theme-transition">Data Quality</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400 theme-transition">Sparse Data:</span>
+                  {job.is_sparse === true && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                      Yes
+                    </span>
+                  )}
+                  {job.is_sparse === false && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      No
+                    </span>
+                  )}
+                  {job.is_sparse === null && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      Not Analyzed
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400 theme-transition">Duplicates:</span>
+                  {job.has_duplicates === true && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                      Yes
+                    </span>
+                  )}
+                  {job.has_duplicates === false && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      No
+                    </span>
+                  )}
+                  {job.has_duplicates === null && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      Not Analyzed
+                    </span>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
 
+            {/* Error Message Display */}
             {job.error_message && (
               <div className="mt-6">
-                <h4 className="text-md font-medium text-red-900 mb-2">Error</h4>
-                <div className="bg-red-50 p-4 rounded-lg">
-                  <p className="text-sm text-red-700">{job.error_message}</p>
+                <h4 className="text-md font-medium text-red-800 dark:text-red-400 mb-3 theme-transition">Error Details</h4>
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3 theme-transition">
+                  <p className="text-sm text-red-700 dark:text-red-300 theme-transition">{job.error_message}</p>
                 </div>
               </div>
             )}
@@ -215,38 +248,19 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
 
   const handleDownloadFile = async (jobId: string, job: Job) => {
     try {
-      // If job has results with output_file_path, use that for download
-      if (job.results && typeof job.results === 'object' && 'output_file_path' in job.results) {
-        const outputPath = (job.results as any).output_file_path;
-        const response = await apiClient.get('/upload/download-file', {
-          params: { filepath: outputPath },
-          responseType: 'blob',
-        });
-        
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        const filename = outputPath.split('/').pop() || job.filename;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
-      } else {
-        // Fallback to original endpoint
-        const response = await apiClient.get(`/jobs/${jobId}/download`, {
-          responseType: 'blob',
-        });
-        
-        const url = window.URL.createObjectURL(new Blob([response.data]));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', job.filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
-      }
+      // Use the jobs download endpoint
+      const response = await apiClient.get(`/jobs/${jobId}/download`, {
+        responseType: 'blob',
+      });
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', job.filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading file:', error);
     }
@@ -278,6 +292,9 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
+                  Quality
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
                   Created
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider theme-transition">
@@ -293,16 +310,28 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                     {job.filename}
                   </div>
                   <div className="text-sm text-gray-500 dark:text-gray-400 theme-transition">ID: {job.id}</div>
-                  {job.selected_ucs && (
+                  {/* {job.selected_ucs && (
                     <div className="text-xs text-blue-600 dark:text-blue-400 theme-transition">UCs: {job.selected_ucs}</div>
-                  )}
+                  )} */}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    job.job_type === 'UC1' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                  }`}>
-                    {job.job_type}
-                  </span>
+                  {/* Render each selected UC as an individual bubble */}
+                  {Array.isArray(job.selected_ucs) && job.selected_ucs.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {job.selected_ucs.map((uc: string) => (
+                        <span
+                          key={uc}
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            uc === 'UC1' ? 'bg-blue-100 text-blue-800' : uc === 'UC4' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {uc}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-500">—</span>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex items-center space-x-2">
@@ -310,6 +339,35 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(job.status)}`}>
                       {getStatusText(job.status)}
                     </span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex flex-col space-y-1">
+                    {job.status === 'failed' && (
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                        Failed
+                      </span>
+                    )}
+                    {job.status !== 'failed' && job.is_sparse === true && (
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">
+                        Sparse
+                      </span>
+                    )}
+                    {job.status !== 'failed' && job.has_duplicates === true && (
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                        Duplicates
+                      </span>
+                    )}
+                    {job.status === 'completed' && job.is_sparse === false && job.has_duplicates === false && (
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-100 text-green-800">
+                        Clean
+                      </span>
+                    )}
+                    {job.status !== 'completed' && job.status !== 'failed' && (job.is_sparse === null || job.has_duplicates === null) && (
+                      <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                        Pending
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
