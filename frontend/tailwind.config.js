@@ -38,11 +38,17 @@ module.exports = {
       },
       animation: {
         'spin-clockwise': 'spin-clockwise 1s linear infinite',
+        // Anti-clockwise / counter-clockwise spin for the processing icon
+        'spin-anticlockwise': 'spin-anticlockwise 1s linear infinite',
       },
       keyframes: {
         'spin-clockwise': {
           '0%': { transform: 'rotate(0deg)' },
           '100%': { transform: 'rotate(360deg)' },
+        },
+        'spin-anticlockwise': {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(-360deg)' },
         },
       },
     },

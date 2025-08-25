@@ -369,7 +369,7 @@ export default function JobList({ jobs, onJobUpdate }: JobListProps) {
                       if (job.status === 'completed' && job.is_sparse === false && job.has_duplicates === false) {
                         return (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 truncate">
-                            Clean
+                            Sparse
                           </span>
                         );
                       }

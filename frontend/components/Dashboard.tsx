@@ -46,7 +46,7 @@ export default function Dashboard({ stats }: DashboardProps) {
         <div className="flex items-center">
           <div className="flex-shrink-0">
             <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-purple-200 dark:from-purple-800 dark:to-purple-700 rounded-xl flex items-center justify-center shadow-sm theme-transition">
-              <svg className={`w-6 h-6 text-purple-600 dark:text-purple-300 ${stats.processing_jobs > 0 ? 'animate-spin-clockwise' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={`w-6 h-6 text-purple-600 dark:text-purple-300 ${stats.processing_jobs > 0 ? 'animate-spin-anticlockwise' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </div>

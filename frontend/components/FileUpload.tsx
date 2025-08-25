@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { CloudArrowUpIcon, DocumentIcon, CheckCircleIcon, ExclamationCircleIcon, FolderIcon, PlayIcon, CogIcon, EyeIcon, XMarkIcon, ArrowDownTrayIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '@/lib/api';
@@ -383,6 +383,79 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
     setPreviewFile(null);
     setPreviewData(null);
   };
+
+  // Compute dataset stats from previewData (sample-based)
+  const previewStats = useMemo(() => {
+    if (!previewData) return null;
+
+    const headers = previewData.headers;
+    const rows = previewData.rows || [];
+    const cols = headers.length;
+    const sampleRows = rows.length;
+    const totalRows = previewData.totalRows || 0;
+
+    // Initialize per-column aggregates
+    const colStats: any[] = headers.map((h) => ({
+      header: h,
+      missing: 0,
+      numericCount: 0,
+      numericSum: 0,
+      numericSumSq: 0,
+      min: Number.POSITIVE_INFINITY,
+      max: Number.NEGATIVE_INFINITY,
+      isNumeric: true,
+    }));
+
+    rows.forEach((r) => {
+      headers.forEach((_, ci) => {
+        const cell = r[ci];
+        if (cell === undefined || cell === null || String(cell).trim() === '') {
+          colStats[ci].missing += 1;
+        } else {
+          const num = Number(String(cell).replace(/[,\s]/g, ''));
+          if (!Number.isFinite(num) || String(cell).trim().length === 0 || /[a-zA-Z]/.test(String(cell))) {
+            // treat as non-numeric
+            colStats[ci].isNumeric = false;
+          } else {
+            // numeric
+            colStats[ci].numericCount += 1;
+            colStats[ci].numericSum += num;
+            colStats[ci].numericSumSq += num * num;
+            if (num < colStats[ci].min) colStats[ci].min = num;
+            if (num > colStats[ci].max) colStats[ci].max = num;
+          }
+        }
+      });
+    });
+
+    // Finalize stats
+    colStats.forEach((c) => {
+      if (c.numericCount > 0) {
+        c.mean = c.numericSum / c.numericCount;
+        const variance = Math.max(0, (c.numericSumSq / c.numericCount) - c.mean * c.mean);
+        c.std = Math.sqrt(variance);
+        if (!isFinite(c.min)) c.min = null;
+        if (!isFinite(c.max)) c.max = null;
+      } else {
+        c.mean = null;
+        c.std = null;
+        c.min = null;
+        c.max = null;
+      }
+      // Determine a simple type
+      c.type = c.isNumeric && c.numericCount > 0 ? 'numeric' : 'text';
+    });
+
+    const numericCols = colStats.filter((c) => c.type === 'numeric').length;
+
+    return {
+      totalRows,
+      cols,
+      sampleRows,
+      colStats,
+      numericCols,
+    };
+  }, [previewData]);
 
   const handleDownloadFile = async (filename: string) => {
     try {
@@ -906,7 +979,56 @@ export default function FileUpload({ onJobUpdate }: FileUploadProps) {
                   <div className="text-sm text-gray-600 dark:text-gray-300 flex-shrink-0 theme-transition">
                     Showing first 100 rows of {previewData.totalRows} total rows
                   </div>
-                  
+
+                  {previewStats && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
+                        <div className="text-xs text-gray-500">Rows (total)</div>
+                        <div className="text-lg font-medium text-gray-900 dark:text-gray-100">{previewStats.totalRows}</div>
+                        <div className="text-xs text-gray-500">Sample rows: {previewStats.sampleRows}</div>
+                      </div>
+                      <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
+                        <div className="text-xs text-gray-500">Columns</div>
+                        <div className="text-lg font-medium text-gray-900 dark:text-gray-100">{previewStats.cols}</div>
+                        <div className="text-xs text-gray-500">Numeric columns: {previewStats.numericCols}</div>
+                      </div>
+                      <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
+                        <div className="text-xs text-gray-500">Missing cells (sample)</div>
+                        <div className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                          {previewStats.colStats.reduce((s: number, c: any) => s + c.missing, 0)}
+                        </div>
+                        <div className="text-xs text-gray-500">(over {previewStats.sampleRows} sampled rows)</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Per-column summary */}
+                  {previewStats && (
+                    <div className="mt-2 overflow-auto border border-gray-200 dark:border-gray-600 rounded-lg p-3 bg-white dark:bg-gray-800">
+                      <div className="text-xs text-gray-500 mb-2">Column summary (sample-based)</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {previewStats.colStats.map((c: any) => (
+                          <div key={c.header} className="p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-100 dark:border-gray-700">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{c.header}</div>
+                              <div className="text-xs text-gray-500">{c.type}</div>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">Missing: {c.missing}</div>
+                            {c.type === 'numeric' && (
+                              <div className="mt-1 text-xs text-gray-700 dark:text-gray-300">
+                                <div>Count: {c.numericCount}</div>
+                                <div>Mean: {c.mean !== null ? c.mean.toFixed(2) : '-'}</div>
+                                <div>Min: {c.min !== null ? c.min : '-'}</div>
+                                <div>Max: {c.max !== null ? c.max : '-'}</div>
+                                <div>Std: {c.std !== null ? c.std.toFixed(2) : '-'}</div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="overflow-auto flex-1 border border-gray-200 dark:border-gray-600 rounded-lg theme-transition">
                     <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 theme-transition">
                       <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 theme-transition">

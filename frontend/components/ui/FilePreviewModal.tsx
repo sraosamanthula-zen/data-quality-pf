@@ -1,5 +1,6 @@
 'use client';
 
+import React, { useMemo } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface FilePreviewModalProps {
@@ -26,6 +27,67 @@ export default function FilePreviewModal({
   onResizeStart
 }: FilePreviewModalProps) {
   if (!isOpen || !filename) return null;
+  const previewStats = useMemo(() => {
+    if (!previewData) return null;
+    const headers = previewData.headers || [];
+    const rows = previewData.rows || [];
+    const sampleRows = rows;
+
+    const columnSummaries = headers.map((h, colIdx) => {
+      const vals = sampleRows.map((r) => (r[colIdx] ?? '').toString());
+      const missing = vals.filter((v) => v === '' || v === '-' || v === null).length;
+      const numericVals = vals
+        .map((v) => {
+          const cleaned = String(v).replace(/[,\s]+/g, '');
+          const n = Number(cleaned);
+          return Number.isFinite(n) ? n : null;
+        })
+        .filter((n) => n !== null) as number[];
+
+      let mean: number | null = null;
+      let std: number | null = null;
+      let min: number | null = null;
+      let max: number | null = null;
+      if (numericVals.length > 0) {
+        const sum = numericVals.reduce((a, b) => a + b, 0);
+        mean = sum / numericVals.length;
+        min = Math.min(...numericVals);
+        max = Math.max(...numericVals);
+        if (numericVals.length > 1) {
+          const variance = numericVals.reduce((acc, v) => acc + Math.pow(v - mean!, 2), 0) / (numericVals.length - 1);
+          std = Math.sqrt(variance);
+        } else {
+          std = 0;
+        }
+      }
+
+      const numericCount = numericVals.length;
+      const type = numericCount === 0 ? 'string' : numericCount / Math.max(1, vals.length) > 0.6 ? 'numeric' : 'mixed';
+
+      return {
+        header: h,
+        missing,
+        numericCount,
+        mean,
+        std,
+        min,
+        max,
+        type,
+      };
+    });
+
+    const numericColumns = columnSummaries.filter((c) => c.type === 'numeric').length;
+    const totalMissing = columnSummaries.reduce((s, c) => s + c.missing, 0);
+
+    return {
+      totalRows: previewData.totalRows,
+      sampleRows: sampleRows.length,
+      columns: previewData.headers.length,
+      numericColumns,
+      totalMissing,
+      columnSummaries,
+    };
+  }, [previewData]);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -63,7 +125,56 @@ export default function FilePreviewModal({
               <div className="text-sm text-gray-600 dark:text-gray-300 flex-shrink-0">
                 Showing first 100 rows of {previewData.totalRows} total rows
               </div>
-              
+
+              {/* Stats Panel */}
+              {previewStats && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex gap-3 flex-wrap">
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3 text-sm">
+                      <div className="text-xs text-gray-500">Total rows</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-white">{previewStats.totalRows}</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3 text-sm">
+                      <div className="text-xs text-gray-500">Sample rows</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-white">{previewStats.sampleRows}</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3 text-sm">
+                      <div className="text-xs text-gray-500">Columns</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-white">{previewStats.columns}</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3 text-sm">
+                      <div className="text-xs text-gray-500">Numeric columns (sample)</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-white">{previewStats.numericColumns}</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3 text-sm">
+                      <div className="text-xs text-gray-500">Missing cells (sample)</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-white">{previewStats.totalMissing}</div>
+                    </div>
+                  </div>
+
+                  {/* Per-column mini summary */}
+                  <div className="overflow-auto max-h-48 border border-gray-100 dark:border-gray-700 rounded-md p-2 bg-gray-50 dark:bg-gray-800">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {previewStats.columnSummaries.map((col) => (
+                        <div key={col.header} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md p-2 text-xs">
+                          <div className="font-medium text-gray-700 dark:text-gray-200 truncate">{col.header}</div>
+                          <div className="text-gray-500">Type: <span className="font-medium text-gray-800 dark:text-gray-100">{col.type}</span></div>
+                          <div className="text-gray-500">Missing: <span className="font-medium text-gray-800 dark:text-gray-100">{col.missing}</span></div>
+                          {col.type !== 'string' && (
+                            <div className="mt-1 text-gray-500">
+                              <div>Count: <span className="font-medium text-gray-800 dark:text-gray-100">{col.numericCount}</span></div>
+                              <div>Mean: <span className="font-medium text-gray-800 dark:text-gray-100">{col.mean !== null ? col.mean.toFixed(2) : '-'}</span></div>
+                              <div>Min: <span className="font-medium text-gray-800 dark:text-gray-100">{col.min ?? '-'}</span></div>
+                              <div>Max: <span className="font-medium text-gray-800 dark:text-gray-100">{col.max ?? '-'}</span></div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-auto flex-1 border border-gray-200 dark:border-gray-600 rounded-lg">
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-600">
                   <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">

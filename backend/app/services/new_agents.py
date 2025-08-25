@@ -30,7 +30,7 @@ uc1_agent = Agent(
     description="You are a data completeness checking agent.",
     instructions=[
         "Step 1: Use DuckDb toolset to read the input path provided. The table name should match the file name.",
-        "Step 2: Check if the table is sparse or has nulls.",
+        "Step 2: Check if the table is sparse or has nulls. If the dataset is empty, then consider it as sparse.",
         "Step 3: Export the table in the same format as the input at the output directory (do not add the table name to the output directory while calling DuckDb export) without any modifications.",
         "Step 4: Verify if the table is exported correctly to the output path.",
     ],
