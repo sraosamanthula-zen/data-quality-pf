@@ -183,54 +183,11 @@ async def preview_file(filepath: str = None, filename: str = None, directory: st
             "totalRows": total_rows,
             "filename": file_path.name
         }
+    except HTTPException:
+        # Re-raise HTTP exceptions (400, 404) as they are
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error previewing file: {str(e)}")
-
-    try:
-        import csv
-
-        headers = []
-        rows = []
-        total_rows = 0
-
-        # Determine delimiter based on file extension
-        delimiter = "\t" if file_extension == ".tsv" else ","
-
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as csvfile:
-            # Read file to count total rows
-            total_rows = sum(1 for line in csvfile) - 1  # Subtract 1 for header
-
-            # Reset file pointer
-            csvfile.seek(0)
-
-            # Read with CSV reader
-            csv_reader = csv.reader(csvfile, delimiter=delimiter)
-
-            # Get headers
-            headers = next(csv_reader, [])
-
-            # Get first 100 data rows
-            for i, row in enumerate(csv_reader):
-                if i >= 100:  # Limit to first 100 rows
-                    break
-
-                # Ensure row has same length as headers
-                while len(row) < len(headers):
-                    row.append("")
-
-                rows.append(row[: len(headers)])  # Trim if longer than headers
-
-        return {
-            "filename": filename,
-            "file_extension": file_extension,
-            "delimiter": delimiter,
-            "headers": headers,
-            "rows": rows,
-            "totalRows": total_rows,
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
 
 @router.get("/files")

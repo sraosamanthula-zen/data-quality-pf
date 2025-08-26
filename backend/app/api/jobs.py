@@ -4,6 +4,7 @@ Jobs management routes for the Data Quality Platform
 
 # Standard library imports
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -21,6 +22,60 @@ from app.schemas import JobResponse, JobStatistics
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+def extract_base_dataset_name(filename_stem: str) -> str:
+    """
+    Extract the base dataset name from a processed filename by removing UC suffixes.
+    This function is designed to be extensible for future UCs.
+    
+    Args:
+        filename_stem: The filename without extension (e.g., "example_dataset_02_dedup")
+        
+    Returns:
+        The base dataset name (e.g., "example_dataset_02")
+    """
+    # Get known suffixes from environment variables
+    env_suffixes = [
+        os.getenv("RESULT_SUFFIX", "_processed"),
+        os.getenv("UC1_OUTPUT_SUFFIX", "_uc1_completeness"), 
+        os.getenv("UC4_OUTPUT_SUFFIX", "_processed"),
+    ]
+    
+    # Common UC suffix patterns (extensible for future UCs)
+    common_patterns = [
+        "_dedup",           # UC4: Duplicate detection
+        "_completeness",    # UC1: Completeness check  
+        "_cleaned",         # General cleaning
+        "_validated",       # Validation
+        "_enriched",        # Data enrichment
+        "_normalized",      # Normalization
+        "_standardized",    # Standardization
+        "_anonymized",      # Anonymization
+        "_transformed",     # General transformation
+    ]
+    
+    # Combine all known suffixes, removing duplicates and empty values
+    all_suffixes = list(set([s for s in env_suffixes + common_patterns if s]))
+    
+    # Sort by length (longest first) to handle nested suffixes correctly
+    all_suffixes.sort(key=len, reverse=True)
+    
+    # Remove the first matching suffix
+    base_name = filename_stem
+    for suffix in all_suffixes:
+        if base_name.endswith(suffix):
+            base_name = base_name[:-len(suffix)]
+            break
+    
+    # Additional pattern matching for numbered UC outputs (e.g., "_uc5_quality", "_uc10_format")
+    # This regex handles future UC patterns like _ucN_description
+    uc_pattern = re.compile(r'_uc\d+_\w+$', re.IGNORECASE)
+    if uc_pattern.search(base_name):
+        base_name = uc_pattern.sub('', base_name)
+    
+    # Fallback: if we couldn't extract a meaningful base name, return the original
+    return base_name if base_name.strip() else filename_stem
+
+
 @router.get("/outputs")
 async def list_output_files(db: Session = Depends(get_db)):
     """List all output files from completed jobs"""
@@ -35,9 +90,9 @@ async def list_output_files(db: Session = Depends(get_db)):
     if not os.path.exists(abs_outputs_directory):
         return {"files": [], "directory": outputs_directory, "message": "Output directory not found"}
 
-    output_files = []
+    all_files = []
 
-    # Walk the outputs directory recursively and list all files
+    # Walk the outputs directory recursively and collect all files
     for root, dirs, files in os.walk(outputs_directory):
         for fname in files:
             try:
@@ -53,6 +108,10 @@ async def list_output_files(db: Session = Depends(get_db)):
                 if len(path_parts) >= 2 and path_parts[0].startswith("batch_"):
                     batch_name = path_parts[0]
 
+                # Extract base dataset name using the extensible function
+                filename_stem = Path(fname).stem
+                base_dataset_name = extract_base_dataset_name(filename_stem)
+
                 # Try to heuristically find a matching job by filename
                 job_match = None
                 try:
@@ -65,7 +124,7 @@ async def list_output_files(db: Session = Depends(get_db)):
                 except Exception:
                     job_match = None
 
-                output_files.append({
+                all_files.append({
                     "filename": fname,
                     "path": file_path,
                     "size": stat.st_size,
@@ -76,12 +135,23 @@ async def list_output_files(db: Session = Depends(get_db)):
                     "relative_path": rel_path,
                     "job_id": job_match.id if job_match else None,
                     "original_filename": job_match.filename if job_match else None,
+                    "base_dataset": base_dataset_name,
                 })
             except Exception:
                 # Skip files that cause stat or permission errors
                 continue
 
-    # Sort by creation time (newest first)
+    # Group files by base dataset name and keep only the latest file per group
+    # This ensures only the final output of the UC pipeline is shown per dataset
+    dataset_groups = {}
+    for file_info in all_files:
+        base_dataset = file_info["base_dataset"]
+        if (base_dataset not in dataset_groups or 
+            file_info["created"] > dataset_groups[base_dataset]["created"]):
+            dataset_groups[base_dataset] = file_info
+
+    # Convert back to list for the response
+    output_files = list(dataset_groups.values())
     output_files.sort(key=lambda x: x["created"], reverse=True)
 
     return {
